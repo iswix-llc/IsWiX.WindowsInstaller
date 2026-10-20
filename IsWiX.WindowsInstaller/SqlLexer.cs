@@ -5,18 +5,6 @@ namespace IsWiX.WindowsInstaller
     using System.Globalization;
     using System.Linq;
     using IsWiX.WindowsInstaller.Format;
-    internal enum SqlTokenKind
-    {
-        Identifier,
-        String,
-        Integer,
-        Marker,
-        Symbol,
-        End,
-    }
-
-    internal sealed record SqlToken(SqlTokenKind Kind, string Text, bool Quoted = false, int Number = 0);
-
     internal static class SqlLexer
     {
         public static List<SqlToken> Tokenize(string sql)
