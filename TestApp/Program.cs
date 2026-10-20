@@ -1,5 +1,4 @@
 ﻿using IsWiX.WindowsInstaller;
-using MsiReader;
 
 namespace ConsoleApp1
 {
@@ -23,15 +22,6 @@ namespace ConsoleApp1
                     }
                 }
             }
-            //using var db = MsiDatabase.Open(@"D:\fusion-1.0.5.msi");
-            //var file = db.GetTable("Property");
-            //foreach (var row in file.Rows)
-            //{
-            //    string? name = row.GetString("Property");
-            //    string? data = row.GetString("Value");
-            //    Console.WriteLine($"{name} : {data}");
-            //}
-            //db.Dispose();
         }
     }
 }
