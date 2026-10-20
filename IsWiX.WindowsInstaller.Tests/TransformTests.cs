@@ -77,6 +77,33 @@ public class TransformTests : IDisposable
     }
 
     [Fact]
+    public void TwoTableTransformChangesBothTablesLikeWindows()
+    {
+        string path = CopyOfBase();
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            db.ApplyTransform(TestFixtures.Path("test-twotables.mst"));
+            db.Commit();
+        }
+
+        using var check = new Database(path);
+        Assert.Equal(TwoTablePropertyRows, PropertyRows(check));
+        Assert.Equal(TwoTableLaunchRows, LaunchConditionRows(check));
+    }
+
+    private static List<string> LaunchConditionRows(Database db)
+    {
+        using View view = db.OpenView("SELECT `Condition`, `Description` FROM `LaunchCondition`");
+        view.Execute();
+        var rows = new List<string>();
+        for (Record? row = view.Fetch(); row != null; row = view.Fetch())
+        {
+            rows.Add(row.GetString(1) + "\t" + row.GetString(2));
+        }
+        return rows;
+    }
+
+    [Fact]
     public void TransformOnReadOnlyDatabaseFails()
     {
         using var db = new Database(CopyOfBase());
@@ -132,6 +159,28 @@ public class TransformTests : IDisposable
         "ErrorDialog\tErrorDlg",
         "WixUIRMOption\tUseRM",
         "SecureCustomProperties\tBURNMSIMODIFY;BURNMSIREPAIR;BURNMSIUNINSTALL;WIX_DOWNGRADE_DETECTED;WIX_UPGRADE_DETECTED",
+    };
+
+    private static readonly string[] TwoTablePropertyRows =
+    {
+        "ALLUSERS\t1",
+        "ARPPRODUCTICON\tIcon.ico",
+        "DISABLEADVTSHORTCUTS\t1",
+        "Manufacturer\ttest",
+        "ProductCode\t{3BE453B9-D0DF-4868-B2D0-4B2AB8B204DF}",
+        "ProductLanguage\t1033",
+        "ProductName\ttest1",
+        "ProductVersion\t0.0.1",
+        "UpgradeCode\t{5BC56B19-5766-45AE-926A-8F0067411CBA}",
+        "DefaultUIFont\tWixUI_Font_Normal",
+        "ErrorDialog\tErrorDlg",
+        "WixUIRMOption\tUseRM",
+        "SecureCustomProperties\tBURNMSIMODIFY;BURNMSIREPAIR;BURNMSIUNINSTALL;WIX_DOWNGRADE_DETECTED;WIX_UPGRADE_DETECTED",
+    };
+
+    private static readonly string[] TwoTableLaunchRows =
+    {
+        "NOT WIX_DOWNGRADE_DETECTED\tA newer version of [ProductName] is already installed!",
     };
 
     private static readonly string[] MultiRows =
