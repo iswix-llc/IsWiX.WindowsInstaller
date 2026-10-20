@@ -896,13 +896,66 @@ namespace IsWiX.WindowsInstaller
         private readonly Dictionary<string, long> newKeyRanks = new Dictionary<string, long>(StringComparer.Ordinal);
         private const long NewStringBase = 1L << 32;
 
+        /// <summary>
+        /// Writes an empty database with a Windows-1252 code page and a summary stream. The file is created new,
+        /// so an existing file is never replaced.
+        /// </summary>
+        private static void CreateEmptyFile(string path)
+        {
+            var properties = new SortedDictionary<uint, SummaryValue>
+            {
+                [SummaryStream.CodePageProperty] = new SummaryValue(SummaryStream.VtI2, number: 1252),
+            };
+            var streams = new Dictionary<string, byte[]> { [SummaryStream.Name] = SummaryStream.Write(properties) };
+
+            using (FileStream output = OpenNew(path))
+            {
+                try
+                {
+                    MsiWriter.Write(output, 1252, new List<MsiWriteTable>(), streams);
+                }
+                catch
+                {
+                    output.Dispose();
+                    File.Delete(path);
+                    throw;
+                }
+            }
+        }
+
+        private static FileStream OpenNew(string path)
+        {
+            try
+            {
+                return new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            }
+            catch (DirectoryNotFoundException)
+            {
+                throw new MsiErrorException((uint) MsiError.PATH_NOT_FOUND);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                throw new MsiErrorException((uint) MsiError.ACCESS_DENIED);
+            }
+            catch (IOException)
+            {
+                // CreateNew fails with an IOException when the file already exists.
+                throw new MsiErrorException((uint) MsiError.FILE_EXISTS);
+            }
+        }
+
         /// <summary>Opens the file for reading. Failures are reported as engine error codes.</summary>
         private static MsiDatabase OpenFile(string path, DatabaseOpenMode mode)
         {
-            // MSIDBOPEN_READONLY (0), MSIDBOPEN_TRANSACT (1) and MSIDBOPEN_DIRECT (2). Create modes are not supported yet.
-            if (mode != DatabaseOpenMode.ReadOnly && mode != DatabaseOpenMode.Transact && mode != DatabaseOpenMode.Direct)
+            // MSIDBOPEN_READONLY (0) to MSIDBOPEN_CREATEDIRECT (4). Patch modes are not supported yet.
+            if (mode != DatabaseOpenMode.ReadOnly && mode != DatabaseOpenMode.Transact && mode != DatabaseOpenMode.Direct
+                && mode != DatabaseOpenMode.Create && mode != DatabaseOpenMode.CreateDirect)
             {
                 throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
+            }
+            if (mode == DatabaseOpenMode.Create || mode == DatabaseOpenMode.CreateDirect)
+            {
+                CreateEmptyFile(path);
             }
             try
             {
@@ -1003,7 +1056,7 @@ namespace IsWiX.WindowsInstaller
         internal void Changed()
         {
             this.dirty = true;
-            if (this.openMode == DatabaseOpenMode.Direct)
+            if (this.openMode == DatabaseOpenMode.Direct || this.openMode == DatabaseOpenMode.CreateDirect)
             {
                 this.WriteChanges();
             }

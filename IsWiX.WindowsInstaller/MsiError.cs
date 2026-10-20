@@ -10,6 +10,7 @@ namespace IsWiX.WindowsInstaller
         ACCESS_DENIED = 5,
         INVALID_HANDLE = 6,
         INVALID_DATA = 13,
+        FILE_EXISTS = 80,
         INVALID_PARAMETER = 87,
         OPEN_FAILED = 110,
         DISK_FULL = 112,
