@@ -180,12 +180,15 @@ internal sealed class CompoundFile
         {
             if (++guard > fat.Length + 1)
                 throw new MsiFormatException("Cycle detected in a sector chain.");
-            var data = ReadSector(sec);
             int take = (int)Math.Min(sectorSize, remaining);
             if (bounded)
-                Buffer.BlockCopy(data, 0, result!, (int)written, take);
+            {
+                ReadSectorInto(sec, result!, (int)written, take);
+            }
             else
-                buffer!.Write(data, 0, take);
+            {
+                buffer!.Write(ReadSector(sec), 0, take);
+            }
             written += take;
             remaining -= take;
             sec = NextSector(fat, sec);
@@ -204,6 +207,17 @@ internal sealed class CompoundFile
 
     private byte[] ReadSector(uint sector)
     {
+        var buffer = new byte[_sectorSize];
+        ReadSectorInto(sector, buffer, 0, _sectorSize);
+        return buffer;
+    }
+
+    /// <summary>
+    /// Reads the first <paramref name="count"/> bytes of a sector into <paramref name="destination"/>. Writing
+    /// straight into the destination means a long stream allocates no buffer per sector.
+    /// </summary>
+    private void ReadSectorInto(uint sector, byte[] destination, int destinationOffset, int count)
+    {
         long offset = (long)(sector + 1) * _sectorSize;
         long length = _stream.Length;
         if (offset >= length)
@@ -215,17 +229,16 @@ internal sealed class CompoundFile
 
         // The last sector of a file may be partial. Writers are not required to pad it,
         // so bytes past the end of the file are read as zeros.
-        var buffer = new byte[_sectorSize];
-        int available = (int)Math.Min(_sectorSize, length - offset);
+        int available = (int)Math.Min(count, length - offset);
         _stream.Seek(offset, SeekOrigin.Begin);
         int total = 0;
         while (total < available)
         {
-            int n = _stream.Read(buffer, total, available - total);
+            int n = _stream.Read(destination, destinationOffset + total, available - total);
             if (n == 0) break;
             total += n;
         }
-        return buffer;
+        Array.Clear(destination, destinationOffset + total, count - total);
     }
 
     private byte[] ReadAt(long offset, int count)
