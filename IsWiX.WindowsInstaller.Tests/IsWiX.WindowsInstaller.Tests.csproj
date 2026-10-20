@@ -21,6 +21,9 @@
   <ItemGroup>
     <None Include="..\MsiReader.Tests\fixtures\basic.msi" Link="fixtures\basic.msi" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\MsiReader.Tests\fixtures\expected\hello.bin" Link="fixtures\hello.bin" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\MsiReader.Tests\fixtures\test-base.msi" Link="fixtures\test-base.msi" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\MsiReader.Tests\fixtures\test-change.mst" Link="fixtures\test-change.mst" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\MsiReader.Tests\fixtures\test-add.mst" Link="fixtures\test-add.mst" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
