@@ -236,6 +236,42 @@ namespace IsWiX.WindowsInstaller
 
     }
 
+    /// <summary>A column definition of CREATE TABLE or ALTER TABLE ... ADD.</summary>
+    internal sealed class SqlColumnDefinition
+    {
+        public string Name { get; set; } = string.Empty;
+
+        public MsiColumnType Type { get; set; }
+
+        /// <summary>The size: characters for strings (0 is unlimited), bytes for integers.</summary>
+        public int Size { get; set; }
+
+        public bool NotNull { get; set; }
+
+        public bool Localizable { get; set; }
+    }
+
+    internal sealed class SqlCreateTable : SqlStatement
+    {
+        public string Table { get; set; } = string.Empty;
+
+        public List<SqlColumnDefinition> Columns { get; } = new List<SqlColumnDefinition>();
+
+        public List<string> PrimaryKeys { get; } = new List<string>();
+    }
+
+    internal sealed class SqlDropTable : SqlStatement
+    {
+        public string Table { get; set; } = string.Empty;
+    }
+
+    internal sealed class SqlAlterTableAdd : SqlStatement
+    {
+        public string Table { get; set; } = string.Empty;
+
+        public SqlColumnDefinition Column { get; set; } = new SqlColumnDefinition();
+    }
+
     internal sealed class SqlParser
     {
         private readonly List<SqlToken> tokens;
@@ -265,11 +301,161 @@ namespace IsWiX.WindowsInstaller
             {
                 return this.ParseDelete();
             }
-            if (this.IsKeyword("CREATE") || this.IsKeyword("DROP") || this.IsKeyword("ALTER"))
+            if (this.IsKeyword("CREATE"))
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                return this.ParseCreateTable();
+            }
+            if (this.IsKeyword("DROP"))
+            {
+                return this.ParseDropTable();
+            }
+            if (this.IsKeyword("ALTER"))
+            {
+                return this.ParseAlterTable();
             }
             throw SqlErrors.Syntax();
+        }
+
+        private SqlCreateTable ParseCreateTable()
+        {
+            this.ExpectKeyword("CREATE");
+            this.ExpectKeyword("TABLE");
+            var create = new SqlCreateTable { Table = this.ExpectName() };
+            this.ExpectSymbol("(");
+            while (true)
+            {
+                if (this.TryKeyword("PRIMARY"))
+                {
+                    this.ExpectKeyword("KEY");
+                    create.PrimaryKeys.Add(this.ExpectName());
+                    while (this.TrySymbol(","))
+                    {
+                        create.PrimaryKeys.Add(this.ExpectName());
+                    }
+                    break;
+                }
+
+                create.Columns.Add(this.ParseColumnDefinition());
+                if (this.IsKeyword("PRIMARY"))
+                {
+                    continue;
+                }
+                this.ExpectSymbol(",");
+            }
+            this.ExpectSymbol(")");
+            this.ExpectEnd();
+            if (create.PrimaryKeys.Count == 0)
+            {
+                throw SqlErrors.Syntax();
+            }
+            return create;
+        }
+
+        private SqlDropTable ParseDropTable()
+        {
+            this.ExpectKeyword("DROP");
+            this.ExpectKeyword("TABLE");
+            var drop = new SqlDropTable { Table = this.ExpectName() };
+            this.ExpectEnd();
+            return drop;
+        }
+
+        private SqlStatement ParseAlterTable()
+        {
+            this.ExpectKeyword("ALTER");
+            this.ExpectKeyword("TABLE");
+            string table = this.ExpectName();
+            if (this.IsKeyword("HOLD") || this.IsKeyword("FREE"))
+            {
+                // HOLD and FREE manage temporary columns, which are not supported.
+                throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+            }
+            this.ExpectKeyword("ADD");
+            var alter = new SqlAlterTableAdd { Table = table, Column = this.ParseColumnDefinition() };
+            this.ExpectEnd();
+            return alter;
+        }
+
+        /// <summary>A column name, its type, and its modifiers: NOT NULL, LOCALIZABLE, or TEMPORARY (not supported).</summary>
+        private SqlColumnDefinition ParseColumnDefinition()
+        {
+            var column = new SqlColumnDefinition { Name = this.ExpectName() };
+            SqlToken type = this.Current;
+            if (type.Kind != SqlTokenKind.Identifier || type.Quoted)
+            {
+                throw SqlErrors.Syntax();
+            }
+            this.position++;
+            switch (type.Text.ToUpperInvariant())
+            {
+                case "CHAR":
+                case "CHARACTER":
+                    column.Type = MsiColumnType.String;
+                    column.Size = this.OptionalSize(255);
+                    break;
+                case "LONGCHAR":
+                    column.Type = MsiColumnType.String;
+                    column.Size = 0;
+                    break;
+                case "SHORT":
+                case "INT":
+                case "INTEGER":
+                    column.Type = MsiColumnType.Integer;
+                    column.Size = 2;
+                    break;
+                case "LONG":
+                    column.Type = MsiColumnType.Integer;
+                    column.Size = 4;
+                    break;
+                case "OBJECT":
+                    column.Type = MsiColumnType.Binary;
+                    break;
+                default:
+                    throw SqlErrors.Syntax();
+            }
+
+            while (true)
+            {
+                if (this.TryKeyword("NOT"))
+                {
+                    this.ExpectKeyword("NULL");
+                    column.NotNull = true;
+                }
+                else if (this.TryKeyword("LOCALIZABLE"))
+                {
+                    column.Localizable = true;
+                }
+                else if (this.IsKeyword("TEMPORARY"))
+                {
+                    throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                }
+                else
+                {
+                    break;
+                }
+            }
+            if (column.Localizable && column.Type != MsiColumnType.String)
+            {
+                throw SqlErrors.Syntax();
+            }
+            return column;
+        }
+
+        /// <summary>An optional "(size)" after a type name. Without one the size is 0, which is unlimited.</summary>
+        private int OptionalSize(int max)
+        {
+            if (!this.TrySymbol("("))
+            {
+                return 0;
+            }
+            SqlToken number = this.Current;
+            if (number.Kind != SqlTokenKind.Integer || number.Number < 0 || number.Number > max)
+            {
+                throw SqlErrors.Syntax();
+            }
+            this.position++;
+            this.ExpectSymbol(")");
+            return number.Number;
         }
 
         private SqlInsert ParseInsert()

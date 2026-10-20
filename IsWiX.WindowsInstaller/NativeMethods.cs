@@ -213,9 +213,12 @@ namespace IsWiX.WindowsInstaller
                     throw new MsiErrorException((uint) Error.INVALID_PARAMETER);
                 }
                 SqlStatement statement = new SqlParser(szQuery).ParseStatement();
-                ManagedView view = statement is SqlSelect select
-                    ? new ManagedView(database, BoundSelect.Bind(select, database))
-                    : new ManagedView(database, BoundWrite.Bind(statement, database));
+                ManagedView view = statement switch
+                {
+                    SqlSelect select => new ManagedView(database, BoundSelect.Bind(select, database)),
+                    SqlCreateTable or SqlDropTable or SqlAlterTableAdd => new ManagedView(database, BoundDdl.Bind(statement, database)),
+                    _ => new ManagedView(database, BoundWrite.Bind(statement, database)),
+                };
                 handle = ManagedHandles.Add(view);
             });
             hView = handle;

@@ -94,6 +94,7 @@ namespace IsWiX.WindowsInstaller
         private bool dirty;
         private readonly List<string> addedTables = new List<string>();
         private readonly List<string> removedTables = new List<string>();
+        private readonly List<string> alteredTables = new List<string>();
         private int? codePageOverride;
         private readonly Dictionary<string, long> newKeyRanks = new Dictionary<string, long>(StringComparer.Ordinal);
         private const long NewStringBase = 1L << 32;
@@ -590,6 +591,53 @@ namespace IsWiX.WindowsInstaller
                 return id.Value;
             }
             return newKeyRanks.TryGetValue(key, out long rank) ? rank : long.MaxValue;
+        }
+
+        /// <summary>CREATE TABLE: adds a table whose name the database does not have.</summary>
+        internal void CreateTable(MutableTable table)
+        {
+            if (this.ContainsTable(table.Name))
+            {
+                throw MutableTable.Failed();
+            }
+            this.PutTable(table);
+        }
+
+        /// <summary>DROP TABLE: removes a table the database has. System tables cannot be dropped.</summary>
+        internal void DropTable(string name)
+        {
+            if (IsSystemTable(name) || !this.ContainsTable(name))
+            {
+                throw MutableTable.Failed();
+            }
+            this.alteredTables.RemoveAll(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase));
+            if (this.addedTables.RemoveAll(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase)) > 0)
+            {
+                this.tables.Remove(name);
+                return;
+            }
+            this.RemoveTable(name);
+        }
+
+        /// <summary>ALTER TABLE ... ADD: a new column, empty in every existing row. A NOT NULL column needs an empty table.</summary>
+        internal void AddColumn(string name, SqlColumn column)
+        {
+            if (IsSystemTable(name))
+            {
+                throw MutableTable.Failed();
+            }
+            MutableTable table = this.GetUserTable(name) ?? throw MutableTable.Failed();
+            if (table.ColumnIndex(column.Name) >= 0 || (!column.IsNullable && table.Rows.Count > 0))
+            {
+                throw MutableTable.Failed();
+            }
+            var columns = table.Columns.Append(column).ToList();
+            var rows = table.Rows.Select(r => r.Append((object?) null).ToArray()).ToList();
+            this.PutTable(new MutableTable(name, columns, rows));
+            if (!this.alteredTables.Any(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase)))
+            {
+                this.alteredTables.Add(name);
+            }
         }
 
         /// <summary>Removes a table defined in the file. Runs only after the whole transform has been checked.</summary>
@@ -1103,7 +1151,7 @@ namespace IsWiX.WindowsInstaller
             var rows = new List<object?[]>();
             foreach (string tableName in this.AllTableNames())
             {
-                if (this.addedTables.Contains(tableName))
+                if (this.addedTables.Contains(tableName) || this.alteredTables.Contains(tableName))
                 {
                     MutableTable added = this.GetUserTable(tableName) ?? throw MutableTable.Failed();
                     for (int i = 0; i < added.Columns.Count; i++)
@@ -1248,6 +1296,7 @@ namespace IsWiX.WindowsInstaller
     {
         private readonly ManagedDatabase database;
         private readonly BoundWrite? write;
+        private readonly BoundDdl? ddl;
         private bool executed;
         private int position;
 
@@ -1263,18 +1312,31 @@ namespace IsWiX.WindowsInstaller
             this.write = write;
         }
 
+        public ManagedView(ManagedDatabase database, BoundDdl ddl)
+        {
+            this.database = database;
+            this.ddl = ddl;
+        }
+
         /// <summary>The SELECT this view runs, or null for a write statement.</summary>
         public BoundSelect? Query { get; }
 
         public SqlResult? Result { get; private set; }
 
-        public int MarkerCount => this.Query?.MarkerCount ?? this.write!.MarkerCount;
+        public int MarkerCount => this.Query?.MarkerCount ?? this.write?.MarkerCount ?? this.ddl!.MarkerCount;
 
         public void Execute(object?[] markers)
         {
-            if (this.write != null)
+            if (this.write != null || this.ddl != null)
             {
-                this.write.Execute(markers);
+                if (this.write != null)
+                {
+                    this.write.Execute(markers);
+                }
+                else
+                {
+                    this.ddl!.Execute(markers);
+                }
                 this.executed = true;
                 return;
             }
@@ -1285,7 +1347,7 @@ namespace IsWiX.WindowsInstaller
         /// <summary>Returns the next row as a record, or null when the rows are exhausted.</summary>
         public ManagedRecord? Fetch()
         {
-            if (this.write != null)
+            if (this.write != null || this.ddl != null)
             {
                 if (!this.executed)
                 {
