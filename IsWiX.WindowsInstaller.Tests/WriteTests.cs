@@ -209,6 +209,92 @@ public class WriteTests : IDisposable
     }
 
     [Fact]
+    public void ViewRefreshFillsRecordFromRowWithSameKey()
+    {
+        using var db = new Database(CopyOfFixture(), DatabaseOpenMode.Transact);
+        using View view = db.OpenView("SELECT `Property`, `Value` FROM `Property`");
+        view.Assign(new Record("Refreshed", "value"));
+
+        using var record = new Record(2);
+        record.SetString(1, "Refreshed");
+        view.Refresh(record);
+
+        Assert.Equal("value", record.GetString(2));
+    }
+
+    [Fact]
+    public void ViewSeekFillsRecordFromRowWithSameKey()
+    {
+        using var db = new Database(CopyOfFixture(), DatabaseOpenMode.Transact);
+        using View view = db.OpenView("SELECT `Property`, `Value` FROM `Property`");
+        view.Assign(new Record("Sought", "found"));
+
+        using var record = new Record(2);
+        record.SetString(1, "Sought");
+        view.Modify(ViewModifyMode.Seek, record);
+
+        Assert.Equal("found", record.GetString(2));
+    }
+
+    [Fact]
+    public void ViewRefreshOfMissingKeyFails()
+    {
+        using var db = new Database(CopyOfFixture(), DatabaseOpenMode.Transact);
+        using View view = db.OpenView("SELECT `Property`, `Value` FROM `Property`");
+
+        using var record = new Record(2);
+        record.SetString(1, "NoSuchProperty");
+        Assert.ThrowsAny<InstallerException>(() => view.Refresh(record));
+    }
+
+    [Fact]
+    public void ViewValidateNewRejectsExistingKeyAndWritesNothing()
+    {
+        using var db = new Database(CopyOfFixture(), DatabaseOpenMode.Transact);
+        using View view = db.OpenView("SELECT `Property`, `Value` FROM `Property`");
+
+        view.Modify(ViewModifyMode.ValidateNew, new Record("Brand", "new"));
+        Assert.DoesNotContain("Brand=new", PropertyNames(db));
+        Assert.ThrowsAny<InstallerException>(() => view.Modify(ViewModifyMode.ValidateNew, new Record("ProductName", "x")));
+    }
+
+    [Fact]
+    public void ViewValidateDeleteRequiresExistingKey()
+    {
+        using var db = new Database(CopyOfFixture(), DatabaseOpenMode.Transact);
+        using View view = db.OpenView("SELECT `Property`, `Value` FROM `Property`");
+
+        view.Modify(ViewModifyMode.ValidateDelete, new Record("ProductName", "x"));
+        Assert.ThrowsAny<InstallerException>(() => view.Modify(ViewModifyMode.ValidateDelete, new Record("Nope", "x")));
+    }
+
+    [Fact]
+    public void ViewMergeInsertsNewRowAndAcceptsIdenticalRow()
+    {
+        using var db = new Database(CopyOfFixture(), DatabaseOpenMode.Transact);
+        using View view = db.OpenView("SELECT `Property`, `Value` FROM `Property`");
+        view.Assign(new Record("Merged", "same"));
+
+        view.Modify(ViewModifyMode.Merge, new Record("Merged", "same"));
+        view.Modify(ViewModifyMode.Merge, new Record("Added", "new"));
+
+        var names = PropertyNames(db);
+        Assert.Contains("Merged=same", names);
+        Assert.Contains("Added=new", names);
+    }
+
+    [Fact]
+    public void ViewMergeOfConflictingRowFails()
+    {
+        using var db = new Database(CopyOfFixture(), DatabaseOpenMode.Transact);
+        using View view = db.OpenView("SELECT `Property`, `Value` FROM `Property`");
+        view.Assign(new Record("Merged", "same"));
+
+        Assert.ThrowsAny<InstallerException>(() => view.Modify(ViewModifyMode.Merge, new Record("Merged", "different")));
+        Assert.Contains("Merged=same", PropertyNames(db));
+    }
+
+    [Fact]
     public void ViewOverFilteredQueryCannotBeModified()
     {
         using var db = new Database(CopyOfFixture(), DatabaseOpenMode.Transact);

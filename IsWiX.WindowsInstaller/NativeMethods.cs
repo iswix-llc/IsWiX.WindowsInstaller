@@ -317,8 +317,18 @@ namespace IsWiX.WindowsInstaller
             return Guard(() =>
             {
                 ManagedView view = ManagedHandles.Get<ManagedView>(hView);
-                object?[] values = ManagedHandles.Get<ManagedRecord>(hRecord).Values();
-                view.Modify(iModifyMode, values);
+                ManagedRecord record = ManagedHandles.Get<ManagedRecord>(hRecord);
+                if (iModifyMode == (int) ViewModifyMode.Refresh || iModifyMode == (int) ViewModifyMode.Seek)
+                {
+                    // These fill the record in place rather than change the table.
+                    object?[] found = view.Lookup(record.Values());
+                    for (int j = 0; j < found.Length; j++)
+                    {
+                        record.Set((uint) (j + 1), found[j]);
+                    }
+                    return;
+                }
+                view.Modify(iModifyMode, record.Values());
             });
         }
 

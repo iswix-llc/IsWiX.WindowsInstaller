@@ -1311,7 +1311,22 @@ namespace IsWiX.WindowsInstaller
             {
                 throw new MsiErrorException((uint) NativeMethods.Error.FUNCTION_FAILED);
             }
+            if (mode >= (int) ViewModifyMode.Validate && mode <= (int) ViewModifyMode.ValidateDelete)
+            {
+                ViewModify.Check(this.database, this.Query, mode, values);
+                return;
+            }
             ViewModify.Apply(this.database, this.Query, mode, values);
+        }
+
+        /// <summary>The view's values for the row whose key the record names, as MsiViewModify's Refresh and Seek give them.</summary>
+        public object?[] Lookup(object?[] values)
+        {
+            if (this.Query == null)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.FUNCTION_FAILED);
+            }
+            return ViewModify.Lookup(this.database, this.Query, values);
         }
     }
 }

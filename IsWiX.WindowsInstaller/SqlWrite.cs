@@ -140,11 +140,18 @@ namespace IsWiX.WindowsInstaller
             this.keys ??= new HashSet<object?[]>(this.Rows.Select(this.KeyOf), RowComparer.Instance);
         }
 
-        /// <summary>Checks a full row against the column definitions.</summary>
-        private void Validate(object?[] row)
+        /// <summary>
+        /// Checks a row against the column definitions. Only the columns in <paramref name="only"/> are checked when
+        /// it is given; the others may be null.
+        /// </summary>
+        public void Validate(object?[] row, ISet<int>? only = null)
         {
             for (int i = 0; i < this.Columns.Count; i++)
             {
+                if (only != null && !only.Contains(i))
+                {
+                    continue;
+                }
                 SqlColumn column = this.Columns[i];
                 object? value = row[i];
                 if (value == null)
@@ -405,11 +412,98 @@ namespace IsWiX.WindowsInstaller
                     table.Insert(supplied);
                     break;
 
+                case (int) ViewModifyMode.Merge:
+                    // A new row is inserted. A row with the same key must already hold the record's values.
+                    if (existing < 0)
+                    {
+                        table.Insert(supplied);
+                    }
+                    else
+                    {
+                        object?[] stored = table.Rows[existing];
+                        foreach (int i in named)
+                        {
+                            if (!SameValue(stored[i], supplied[i]))
+                            {
+                                throw MutableTable.Failed();
+                            }
+                        }
+                    }
+                    break;
+
                 default:
                     throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
             }
 
             database.Changed();
+        }
+
+        /// <summary>The table, and the record's values placed at their table positions, for a single-table view.</summary>
+        private static (MutableTable Table, object?[] Supplied, HashSet<int> Named, int[] Positions) Prepare(
+            ManagedDatabase database, BoundSelect query, object?[] values)
+        {
+            if (!query.IsSingleTableWithoutFilter)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.FUNCTION_FAILED);
+            }
+            MutableTable table = database.GetUserTable(query.SingleTable.Name)
+                ?? throw MutableTable.Failed();
+            if (values.Length != query.OutputColumns.Count)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_PARAMETER);
+            }
+            int[] positions = query.TableColumnIndexes;
+            var supplied = new object?[table.Columns.Count];
+            for (int j = 0; j < positions.Length; j++)
+            {
+                supplied[positions[j]] = values[j];
+            }
+            return (table, supplied, positions.ToHashSet(), positions);
+        }
+
+        /// <summary>Refresh and Seek: the view's values for the row with the record's key.</summary>
+        public static object?[] Lookup(ManagedDatabase database, BoundSelect query, object?[] values)
+        {
+            (MutableTable table, object?[] supplied, _, int[] positions) = Prepare(database, query, values);
+            int existing = table.FindByKey(table.KeyOf(supplied));
+            RequireExisting(existing);
+            object?[] stored = table.Rows[existing];
+            var result = new object?[positions.Length];
+            for (int j = 0; j < positions.Length; j++)
+            {
+                result[j] = stored[positions[j]];
+            }
+            return result;
+        }
+
+        /// <summary>The Validate modes: checks the record against the table without changing it.</summary>
+        public static void Check(ManagedDatabase database, BoundSelect query, int mode, object?[] values)
+        {
+            (MutableTable table, object?[] supplied, HashSet<int> named, _) = Prepare(database, query, values);
+            table.Validate(supplied, named);
+            int existing = table.FindByKey(table.KeyOf(supplied));
+            switch (mode)
+            {
+                case (int) ViewModifyMode.ValidateNew:
+                    if (existing >= 0)
+                    {
+                        throw MutableTable.Failed();
+                    }
+                    break;
+
+                case (int) ViewModifyMode.ValidateDelete:
+                    RequireExisting(existing);
+                    break;
+            }
+        }
+
+        private static bool SameValue(object? a, object? b)
+        {
+            if (a is byte[] left && b is byte[] right)
+            {
+                return left.AsSpan().SequenceEqual(right);
+            }
+            return Equals(a, b);
         }
 
         private static void RequireExisting(int index)
