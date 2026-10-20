@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="IsWiX.WindowsInstaller/IsWiX.WindowsInstaller.csproj" Id="15c257cc-838f-4ab4-8d80-6b1f9f90909b" />
+  <Project Path="IsWiX.WindowsInstaller.Tests/IsWiX.WindowsInstaller.Tests.csproj" />
+  <Project Path="TestApp/TestApp.csproj" />
+</Solution>

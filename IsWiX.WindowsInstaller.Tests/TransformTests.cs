@@ -1,0 +1,346 @@
+using IsWiX.WindowsInstaller;
+using Xunit;
+
+namespace IsWiX.WindowsInstaller.Tests;
+
+/// <summary>
+/// Transform tests. Each expected table is what Windows Installer produced when it applied the same transform
+/// to the same database. Each test works on its own copy of the base.
+/// </summary>
+public class TransformTests : IDisposable
+{
+    private readonly string folder = Path.Combine(AppContext.BaseDirectory, "work", Guid.NewGuid().ToString("N"));
+
+    public TransformTests()
+    {
+        Directory.CreateDirectory(folder);
+    }
+
+    public void Dispose()
+    {
+        Directory.Delete(folder, recursive: true);
+    }
+
+    private string CopyOfBase()
+    {
+        string copy = Path.Combine(folder, "test.msi");
+        File.Copy(TestFixtures.Path("test-base.msi"), copy);
+        return copy;
+    }
+
+    private static List<string> PropertyRows(Database db)
+    {
+        using View view = db.OpenView("SELECT `Property`, `Value` FROM `Property`");
+        view.Execute();
+        var rows = new List<string>();
+        for (Record? row = view.Fetch(); row != null; row = view.Fetch())
+        {
+            rows.Add(row.GetString(1) + "\t" + (row.IsNull(2) ? "" : row.GetString(2)));
+        }
+        return rows;
+    }
+
+    private static List<string> ApplyAndReadBack(string transform, string path)
+    {
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            db.ApplyTransform(TestFixtures.Path(transform));
+            db.Commit();
+        }
+
+        using var check = new Database(path);
+        return PropertyRows(check);
+    }
+
+    [Fact]
+    public void ChangeTransformSetsProductNameLikeWindows()
+    {
+        Assert.Equal(ChangedRows, ApplyAndReadBack("test-change.mst", CopyOfBase()));
+    }
+
+    [Fact]
+    public void AddTransformInsertsPropertyLikeWindows()
+    {
+        Assert.Equal(AddedRows, ApplyAndReadBack("test-add.mst", CopyOfBase()));
+    }
+
+    [Fact]
+    public void DeleteTransformRemovesPropertyLikeWindows()
+    {
+        Assert.Equal(DeletedRows, ApplyAndReadBack("test-delete.mst", CopyOfBase()));
+    }
+
+    [Fact]
+    public void MultiTransformChangesAndInsertsLikeWindows()
+    {
+        Assert.Equal(MultiRows, ApplyAndReadBack("test-multi.mst", CopyOfBase()));
+    }
+
+    [Fact]
+    public void TwoTableTransformChangesBothTablesLikeWindows()
+    {
+        string path = CopyOfBase();
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            db.ApplyTransform(TestFixtures.Path("test-twotables.mst"));
+            db.Commit();
+        }
+
+        using var check = new Database(path);
+        Assert.Equal(TwoTablePropertyRows, PropertyRows(check));
+        Assert.Equal(TwoTableLaunchRows, LaunchConditionRows(check));
+    }
+
+    private static List<string> LaunchConditionRows(Database db)
+    {
+        using View view = db.OpenView("SELECT `Condition`, `Description` FROM `LaunchCondition`");
+        view.Execute();
+        var rows = new List<string>();
+        for (Record? row = view.Fetch(); row != null; row = view.Fetch())
+        {
+            rows.Add(row.GetString(1) + "\t" + row.GetString(2));
+        }
+        return rows;
+    }
+
+    [Fact]
+    public void NewTableTransformAddsTableWithRowLikeWindows()
+    {
+        string path = CopyOfBase();
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            db.ApplyTransform(TestFixtures.Path("test-newtable.mst"));
+            db.Commit();
+        }
+
+        using var check = new Database(path);
+        using View view = check.OpenView("SELECT `Key`, `Value` FROM `MyProperties`");
+        view.Execute();
+        var rows = new List<string>();
+        for (Record? row = view.Fetch(); row != null; row = view.Fetch())
+        {
+            rows.Add(row.GetString(1) + "\t" + row.GetString(2));
+        }
+        Assert.Equal(new List<string> { "Meaning\t42" }, rows);
+    }
+
+    [Fact]
+    public void NullTransformClearsTemplateLikeWindows()
+    {
+        string path = CopyOfBase();
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            db.ApplyTransform(TestFixtures.Path("test-null.mst"));
+            db.Commit();
+        }
+
+        using var check = new Database(path);
+        using View view = check.OpenView("SELECT `Action`, `Template` FROM `ActionText` WHERE `Action` = 'InstallFiles'");
+        view.Execute();
+        Record? row = view.Fetch();
+        Assert.NotNull(row);
+        Assert.True(row!.IsNull(2));
+    }
+
+    [Fact]
+    public void AddRemoveTransformInsertsAndDeletesLikeWindows()
+    {
+        string path = CopyOfBase();
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            db.ApplyTransform(TestFixtures.Path("test-addremove.mst"));
+            db.Commit();
+        }
+
+        using var check = new Database(path);
+        Assert.Equal(AddRemoveRows, PropertyRows(check));
+    }
+
+    [Fact]
+    public void TwoColumnTransformChangesStringAndIntegerLikeWindows()
+    {
+        string path = CopyOfBase();
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            db.ApplyTransform(TestFixtures.Path("test-twocolumns.mst"));
+            db.Commit();
+        }
+
+        using var check = new Database(path);
+        using View view = check.OpenView("SELECT `Feature`, `Description`, `Level` FROM `Feature`");
+        view.Execute();
+        var rows = new List<string>();
+        for (Record? row = view.Fetch(); row != null; row = view.Fetch())
+        {
+            rows.Add(row.GetString(1) + "\t" + row.GetString(2) + "\t" + row.GetInteger(3));
+        }
+        Assert.Equal(FeatureRows, rows);
+    }
+
+    [Fact]
+    public void TableDeleteTransformRemovesValidationTableLikeWindows()
+    {
+        string path = CopyOfBase();
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            db.ApplyTransform(TestFixtures.Path("test-dropvalidation.mst"));
+            db.Commit();
+        }
+
+        using var check = new Database(path);
+        var names = check.Tables.Select(t => t.Name).Where(n => !n.StartsWith('_')).OrderBy(n => n, StringComparer.Ordinal).ToList();
+        Assert.Equal(WindowsTableNames.OrderBy(n => n, StringComparer.Ordinal), names);
+    }
+
+    [Fact]
+    public void TransformOnReadOnlyDatabaseFails()
+    {
+        using var db = new Database(CopyOfBase());
+        Assert.ThrowsAny<InstallerException>(() => db.ApplyTransform(TestFixtures.Path("test-change.mst")));
+    }
+
+    private static readonly string[] ChangedRows =
+    {
+        "ALLUSERS\t1",
+        "ARPPRODUCTICON\tIcon.ico",
+        "DISABLEADVTSHORTCUTS\t1",
+        "Manufacturer\ttest",
+        "ProductCode\t{3BE453B9-D0DF-4868-B2D0-4B2AB8B204DF}",
+        "ProductLanguage\t1033",
+        "ProductName\tchange",
+        "ProductVersion\t0.0.1",
+        "UpgradeCode\t{5BC56B19-5766-45AE-926A-8F0067411CBA}",
+        "DefaultUIFont\tWixUI_Font_Normal",
+        "ErrorDialog\tErrorDlg",
+        "WixUIRMOption\tUseRM",
+        "SecureCustomProperties\tBURNMSIMODIFY;BURNMSIREPAIR;BURNMSIUNINSTALL;WIX_DOWNGRADE_DETECTED;WIX_UPGRADE_DETECTED",
+    };
+
+    private static readonly string[] AddedRows =
+    {
+        "ALLUSERS\t1",
+        "ARPPRODUCTICON\tIcon.ico",
+        "DISABLEADVTSHORTCUTS\t1",
+        "Manufacturer\ttest",
+        "ProductCode\t{3BE453B9-D0DF-4868-B2D0-4B2AB8B204DF}",
+        "ProductLanguage\t1033",
+        "ProductName\ttest",
+        "ProductVersion\t0.0.1",
+        "UpgradeCode\t{5BC56B19-5766-45AE-926A-8F0067411CBA}",
+        "DefaultUIFont\tWixUI_Font_Normal",
+        "ErrorDialog\tErrorDlg",
+        "WixUIRMOption\tUseRM",
+        "SecureCustomProperties\tBURNMSIMODIFY;BURNMSIREPAIR;BURNMSIUNINSTALL;WIX_DOWNGRADE_DETECTED;WIX_UPGRADE_DETECTED",
+        "Add\tSomething",
+    };
+
+    private static readonly string[] DeletedRows =
+    {
+        "ALLUSERS\t1",
+        "ARPPRODUCTICON\tIcon.ico",
+        "DISABLEADVTSHORTCUTS\t1",
+        "ProductCode\t{3BE453B9-D0DF-4868-B2D0-4B2AB8B204DF}",
+        "ProductLanguage\t1033",
+        "ProductName\ttest",
+        "ProductVersion\t0.0.1",
+        "UpgradeCode\t{5BC56B19-5766-45AE-926A-8F0067411CBA}",
+        "DefaultUIFont\tWixUI_Font_Normal",
+        "ErrorDialog\tErrorDlg",
+        "WixUIRMOption\tUseRM",
+        "SecureCustomProperties\tBURNMSIMODIFY;BURNMSIREPAIR;BURNMSIUNINSTALL;WIX_DOWNGRADE_DETECTED;WIX_UPGRADE_DETECTED",
+    };
+
+    private static readonly string[] TwoTablePropertyRows =
+    {
+        "ALLUSERS\t1",
+        "ARPPRODUCTICON\tIcon.ico",
+        "DISABLEADVTSHORTCUTS\t1",
+        "Manufacturer\ttest",
+        "ProductCode\t{3BE453B9-D0DF-4868-B2D0-4B2AB8B204DF}",
+        "ProductLanguage\t1033",
+        "ProductName\ttest1",
+        "ProductVersion\t0.0.1",
+        "UpgradeCode\t{5BC56B19-5766-45AE-926A-8F0067411CBA}",
+        "DefaultUIFont\tWixUI_Font_Normal",
+        "ErrorDialog\tErrorDlg",
+        "WixUIRMOption\tUseRM",
+        "SecureCustomProperties\tBURNMSIMODIFY;BURNMSIREPAIR;BURNMSIUNINSTALL;WIX_DOWNGRADE_DETECTED;WIX_UPGRADE_DETECTED",
+    };
+
+    private static readonly string[] TwoTableLaunchRows =
+    {
+        "NOT WIX_DOWNGRADE_DETECTED\tA newer version of [ProductName] is already installed!",
+    };
+
+    private static readonly string[] MultiRows =
+    {
+        "ALLUSERS\t1",
+        "ARPPRODUCTICON\tIcon.ico",
+        "DISABLEADVTSHORTCUTS\t1",
+        "Manufacturer\ttest1",
+        "ProductCode\t{3BE453B9-D0DF-4868-B2D0-4B2AB8B204DF}",
+        "ProductLanguage\t1033",
+        "ProductName\ttest",
+        "ProductVersion\t0.0.1",
+        "UpgradeCode\t{5BC56B19-5766-45AE-926A-8F0067411CBA}",
+        "DefaultUIFont\tWixUI_Font_Normal",
+        "ErrorDialog\tErrorDlg",
+        "WixUIRMOption\tUseRM",
+        "SecureCustomProperties\tBURNMSIMODIFY;BURNMSIREPAIR;BURNMSIUNINSTALL;WIX_DOWNGRADE_DETECTED;WIX_UPGRADE_DETECTED",
+        "New\tProperty",
+    };
+
+    private static readonly string[] AddRemoveRows =
+    {
+        "ALLUSERS\t1",
+        "ARPPRODUCTICON\tIcon.ico",
+        "DISABLEADVTSHORTCUTS\t1",
+        "Manufacturer\ttest",
+        "test\t42",
+        "ProductCode\t{3BE453B9-D0DF-4868-B2D0-4B2AB8B204DF}",
+        "ProductLanguage\t1033",
+        "ProductName\ttest",
+        "ProductVersion\t0.0.1",
+        "UpgradeCode\t{5BC56B19-5766-45AE-926A-8F0067411CBA}",
+        "DefaultUIFont\tWixUI_Font_Normal",
+        "ErrorDialog\tErrorDlg",
+        "WixUIRMOption\tUseRM",
+    };
+
+    // Windows Installer's Feature table after test-twocolumns.mst, as Description and Level.
+    private static readonly string[] FeatureRows =
+    {
+        "test\tInstalls all the files needed for testtest\t2",
+    };
+
+    // Windows Installer's user tables after test-dropvalidation.mst. The _Validation table is gone.
+    private static readonly string[] WindowsTableNames =
+    {
+        "Property",
+        "Upgrade",
+        "LaunchCondition",
+        "Icon",
+        "Directory",
+        "Feature",
+        "TextStyle",
+        "ControlEvent",
+        "Control",
+        "CheckBox",
+        "ListBox",
+        "ActionText",
+        "EventMapping",
+        "Dialog",
+        "RadioButton",
+        "ControlCondition",
+        "Binary",
+        "UIText",
+        "Error",
+        "AdminUISequence",
+        "AdminExecuteSequence",
+        "AdvtExecuteSequence",
+        "InstallUISequence",
+        "InstallExecuteSequence",
+        "File",
+        "Media",
+    };
+}
