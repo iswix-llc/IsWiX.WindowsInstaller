@@ -3,12 +3,6 @@ using IsWiX.WindowsInstaller.Format.Internal;
 
 namespace IsWiX.WindowsInstaller.Format;
 
-/// <summary>A stream to write: its length, and a function that returns its bytes when the writer needs them.</summary>
-internal readonly record struct StreamSource(long Length, Func<byte[]> Read)
-{
-    public static StreamSource Of(byte[] data) => new StreamSource(data.Length, () => data);
-}
-
 /// <summary>Writes an MSI database from tables and streams. Output can be read back by <see cref="MsiDatabase"/>.</summary>
 internal static class MsiWriter
 {

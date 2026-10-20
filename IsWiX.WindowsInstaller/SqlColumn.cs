@@ -5,6 +5,7 @@ namespace IsWiX.WindowsInstaller
     using System.Globalization;
     using System.Linq;
     using IsWiX.WindowsInstaller.Format;
+
     internal sealed record SqlColumn(string Table, string Name, MsiColumnType Type, int Size,
         bool IsNullable, bool IsPrimaryKey, bool IsLocalizable)
     {
@@ -38,8 +39,4 @@ namespace IsWiX.WindowsInstaller
             }
         }
     }
-
-    internal sealed record SqlTable(string Name, IReadOnlyList<SqlColumn> Columns, IReadOnlyList<object?[]> Rows);
-
-    internal sealed record SqlResult(IReadOnlyList<SqlColumn> Columns, IReadOnlyList<object?[]> Rows);
 }

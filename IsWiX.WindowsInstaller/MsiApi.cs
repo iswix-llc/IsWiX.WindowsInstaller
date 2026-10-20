@@ -8,6 +8,7 @@ namespace IsWiX.WindowsInstaller
     using IStream  = System.Runtime.InteropServices.ComTypes.IStream;
     using FILETIME = System.Runtime.InteropServices.ComTypes.FILETIME;
     using STATSTG  = System.Runtime.InteropServices.ComTypes.STATSTG;
+    using IsWiX.WindowsInstaller.Format;
 
     /// <summary>
     /// Managed implementation of the Windows Installer functions used by this library. Databases are

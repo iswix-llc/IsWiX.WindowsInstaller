@@ -1,4 +1,4 @@
-namespace IsWiX.WindowsInstaller
+namespace IsWiX.WindowsInstaller.Format
 {
     using System;
     using System.Buffers.Binary;

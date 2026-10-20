@@ -1,6 +1,6 @@
 // The summary information stream (MS-OLEPS property set) and the handle the MsiSummaryInfo functions use.
 // The stream holds one section of typed properties. Property 1 is the code page that strings are encoded in.
-namespace IsWiX.WindowsInstaller
+namespace IsWiX.WindowsInstaller.Format
 {
     using System;
     using System.Buffers.Binary;
