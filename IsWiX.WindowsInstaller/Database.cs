@@ -540,13 +540,10 @@ namespace IsWiX.WindowsInstaller
                     for (count = 0; ; count++)
                     {
                         // Avoid creating unnecessary Record objects by not calling View.Fetch().
-                        int? recordHandle = MsiApi.MsiViewFetch(view);
-                        if (recordHandle == null)
+                        if (MsiApi.MsiViewFetch(view) == null)
                         {
                             break;
                         }
-
-                        MsiApi.MsiCloseHandle(recordHandle.Value);
                     }
                 }
             }
@@ -779,8 +776,7 @@ namespace IsWiX.WindowsInstaller
         /// </p></remarks>
         public Record CreateRecord(int fieldCount)
         {
-            int hRecord = MsiApi.MsiCreateRecord((uint) fieldCount);
-            return new Record(hRecord, true, (View) null);
+            return new Record(fieldCount);
         }
 
         /// <summary>

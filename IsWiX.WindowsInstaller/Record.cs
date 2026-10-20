@@ -1,6 +1,7 @@
 namespace IsWiX.WindowsInstaller
 {
     using System;
+    using System.Globalization;
     using System.IO;
     using System.Text;
     using System.Collections.Generic;
@@ -21,7 +22,7 @@ namespace IsWiX.WindowsInstaller
     public class Record : IDisposable
     {
 
-        private readonly EngineHandle handleRef;
+        private bool closed;
 
         /// <summary>
         /// Checks if the handle is closed. When closed, method calls on the handle object may throw an <see cref="InvalidHandleException"/>.
@@ -30,18 +31,18 @@ namespace IsWiX.WindowsInstaller
         {
             get
             {
-                return this.handleRef.IsClosed;
+                return this.closed;
             }
         }
 
         /// <summary>
-        /// Gets the engine handle id. Throws if the handle has been closed.
+        /// Throws <see cref="InvalidHandleException"/> if the record has been closed.
         /// </summary>
-        internal int Id
+        internal void ThrowIfClosed()
         {
-            get
+            if (this.closed)
             {
-                return this.handleRef.Id;
+                throw new InvalidHandleException();
             }
         }
 
@@ -62,32 +63,17 @@ namespace IsWiX.WindowsInstaller
             this.Dispose();
         }
 
-        /// <summary>
-        /// Tests whether this object is equal to another of the same type with the same engine handle id.
-        /// </summary>
-        public override bool Equals(object obj)
-        {
-            return obj != null && this.GetType() == obj.GetType() &&
-                this.Id == ((Record) obj).Id;
-        }
-
-        /// <summary>
-        /// Gets a hash value derived from the engine handle id.
-        /// </summary>
-        public override int GetHashCode()
-        {
-            return this.Id.GetHashCode();
-        }
-
         /// <summary>Releases the handle. Subclasses may override to release their own resources first.</summary>
         /// <param name="disposing">True when called from Dispose.</param>
         protected virtual void Dispose(bool disposing)
         {
             if (disposing)
             {
-                this.handleRef.Close();
+                this.closed = true;
             }
         }
+        private readonly object?[] fields;
+        private readonly Dictionary<uint, int> readOffsets = new Dictionary<uint, int>();
         private View view;
         private bool isFormatStringInvalid;
 
@@ -116,7 +102,7 @@ namespace IsWiX.WindowsInstaller
         /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msicreaterecord.asp">MsiCreateRecord</a>
         /// </p></remarks>
         public Record(int fieldCount)
-            : this(MsiApi.MsiCreateRecord((uint) fieldCount), true, (View) null)
+            : this(fieldCount, (View) null)
         {
         }
 
@@ -141,10 +127,96 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        internal Record(int handle, bool ownsHandle, View view)
+        internal Record(int fieldCount, View view)
         {
-            this.handleRef = new EngineHandle(handle, ownsHandle);
+            this.fields = new object?[fieldCount + 1];
             this.view = view;
+        }
+
+        internal Record(IReadOnlyList<object?> values, View view)
+            : this(values.Count, view)
+        {
+            for (int i = 0; i < values.Count; i++)
+            {
+                this.fields[i + 1] = values[i];
+            }
+        }
+
+        /// <summary>The value of a field, without the format-string checks the public indexer makes.</summary>
+        internal object? ValueAt(uint field)
+        {
+            this.CheckField(field);
+            return this.fields[field];
+        }
+
+        internal void SetValue(uint field, object? value)
+        {
+            this.CheckField(field);
+            this.fields[field] = value;
+            this.readOffsets.Remove(field);
+        }
+
+        internal void ClearValues()
+        {
+            for (int i = 0; i < this.fields.Length; i++)
+            {
+                this.fields[i] = null;
+            }
+            this.readOffsets.Clear();
+        }
+
+        internal int ReadOffset(uint field)
+        {
+            return this.readOffsets.TryGetValue(field, out int offset) ? offset : 0;
+        }
+
+        internal void SetReadOffset(uint field, int offset)
+        {
+            this.readOffsets[field] = offset;
+        }
+
+        /// <summary>Returns fields 1..n, the parameter values a query is executed with.</summary>
+        internal object?[] Values()
+        {
+            var values = new object?[this.FieldCount];
+            Array.Copy(this.fields, 1, values, 0, this.FieldCount);
+            return values;
+        }
+
+        internal string ReadString(uint field)
+        {
+            switch (this.ValueAt(field))
+            {
+                case null:
+                    return string.Empty;
+                case string text:
+                    return text;
+                case int number:
+                    return number.ToString(CultureInfo.InvariantCulture);
+                default:
+                    throw new MsiErrorException((uint) MsiError.DATATYPE_MISMATCH);
+            }
+        }
+
+        internal int ReadInteger(uint field)
+        {
+            switch (this.ValueAt(field))
+            {
+                case int number:
+                    return number;
+                case string text when int.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out int parsed):
+                    return parsed;
+                default:
+                    return int.MinValue;
+            }
+        }
+
+        private void CheckField(uint field)
+        {
+            if (field > this.FieldCount)
+            {
+                throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
+            }
         }
 
         /// <summary>
@@ -158,7 +230,8 @@ namespace IsWiX.WindowsInstaller
         {
             get
             {
-                return (int) MsiApi.MsiRecordGetFieldCount(this.Id);
+                this.ThrowIfClosed();
+                return this.fields.Length - 1;
             }
         }
 
@@ -310,7 +383,7 @@ namespace IsWiX.WindowsInstaller
         public bool IsNull(int field)
         {
             this.CheckRange(field);
-            return MsiApi.MsiRecordIsNull(this.Id, (uint) field);
+            return MsiApi.MsiRecordIsNull(this, (uint) field);
         }
 
         /// <summary>
@@ -349,7 +422,7 @@ namespace IsWiX.WindowsInstaller
         public int GetDataSize(int field)
         {
             this.CheckRange(field);
-            return (int) MsiApi.MsiRecordDataSize(this.Id, (uint) field);
+            return (int) MsiApi.MsiRecordDataSize(this, (uint) field);
         }
 
         /// <summary>
@@ -392,7 +465,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            int value = MsiApi.MsiRecordGetInteger(this.Id, (uint) field);
+            int value = MsiApi.MsiRecordGetInteger(this, (uint) field);
             if (value == Int32.MinValue)  // MSI_NULL_INTEGER
             {
                 return 0;
@@ -431,7 +504,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            int value = MsiApi.MsiRecordGetInteger(this.Id, (uint) field);
+            int value = MsiApi.MsiRecordGetInteger(this, (uint) field);
             if (value == Int32.MinValue)  // MSI_NULL_INTEGER
             {
                 return null;
@@ -469,7 +542,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            MsiApi.MsiRecordSetInteger(this.Id, (uint) field, value);
+            MsiApi.MsiRecordSetInteger(this, (uint) field, value);
         }
 
         /// <summary>
@@ -502,7 +575,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            MsiApi.MsiRecordSetInteger(this.Id, (uint) field, value.HasValue ? (int) value : Int32.MinValue);
+            MsiApi.MsiRecordSetInteger(this, (uint) field, value.HasValue ? (int) value : Int32.MinValue);
         }
 
         /// <summary>
@@ -534,7 +607,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            return MsiApi.MsiRecordGetString(this.Id, (uint) field);
+            return MsiApi.MsiRecordGetString(this, (uint) field);
         }
 
         /// <summary>
@@ -570,7 +643,7 @@ namespace IsWiX.WindowsInstaller
                 value = String.Empty;
             }
 
-            MsiApi.MsiRecordSetString(this.Id, (uint) field, value);
+            MsiApi.MsiRecordSetString(this, (uint) field, value);
 
             // If we set the FormatString manually, then it should be valid again
             if (field == 0)
@@ -751,7 +824,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("filePath");
             }
 
-            MsiApi.MsiRecordSetStream(this.Id, (uint) field, filePath);
+            MsiApi.MsiRecordSetStream(this, (uint) field, filePath);
         }
 
         /// <summary>
@@ -795,7 +868,7 @@ namespace IsWiX.WindowsInstaller
 
             if (stream == null)
             {
-                MsiApi.MsiRecordSetStream(this.Id, (uint) field, null);
+                MsiApi.MsiRecordSetStream(this, (uint) field, null);
             }
             else
             {
@@ -813,7 +886,7 @@ namespace IsWiX.WindowsInstaller
                     writeStream.Close();
                     writeStream = null;
 
-                    MsiApi.MsiRecordSetStream(this.Id, (uint) field, tempPath);
+                    MsiApi.MsiRecordSetStream(this, (uint) field, tempPath);
                 }
                 finally
                 {
@@ -891,7 +964,7 @@ namespace IsWiX.WindowsInstaller
                 return String.Empty;
             }
 
-            return MsiApi.MsiFormatRecord(this.Id);
+            return MsiApi.MsiFormatRecord(this);
         }
 
         /// <summary>

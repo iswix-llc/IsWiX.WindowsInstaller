@@ -225,7 +225,7 @@ namespace IsWiX.WindowsInstaller
         {
             try
             {
-                MsiApi.MsiViewExecute(this, (executeParams != null ? executeParams.Id : 0));
+                MsiApi.MsiViewExecute(this, executeParams);
             }
             catch (BadQuerySyntaxException)
             {
@@ -259,13 +259,12 @@ namespace IsWiX.WindowsInstaller
         /// </p></remarks>
         public Record Fetch()
         {
-            int? recordHandle = MsiApi.MsiViewFetch(this);
-            if (recordHandle == null)
+            Record? r = MsiApi.MsiViewFetch(this);
+            if (r == null)
             {
                 return null;
             }
 
-            Record r = new Record(recordHandle.Value, true, this);
             r.IsFormatStringInvalid = true;
             return r;
         }
@@ -320,7 +319,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("record");
             }
 
-            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this, (int) mode, record.Id);
+            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this, (int) mode, record);
             if (mode == ViewModifyMode.Insert || mode == ViewModifyMode.InsertTemporary)
             {
                 record.IsFormatStringInvalid = true;
@@ -478,7 +477,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("record");
             }
 
-            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this, (int) ViewModifyMode.Seek, record.Id);
+            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this, (int) ViewModifyMode.Seek, record);
             record.IsFormatStringInvalid = true;
             if (outcome == MsiApi.ModifyOutcome.FunctionFailed)
             {
@@ -517,7 +516,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("record");
             }
 
-            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this, (int) ViewModifyMode.Merge, record.Id);
+            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this, (int) ViewModifyMode.Merge, record);
             if (outcome == MsiApi.ModifyOutcome.FunctionFailed)
             {
                 return false;
@@ -625,7 +624,7 @@ namespace IsWiX.WindowsInstaller
 
         private ICollection<ValidationErrorInfo> InternalValidate(ViewModifyMode mode, Record record)
         {
-            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this, (int) mode, record.Id);
+            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this, (int) mode, record);
             if (outcome == MsiApi.ModifyOutcome.InvalidData)
             {
                 ICollection<ValidationErrorInfo> errorInfo = new List<ValidationErrorInfo>();
@@ -680,7 +679,7 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>Returns the next row as a record, or null when the rows are exhausted.</summary>
-        internal EngineRecord? NextRow()
+        internal Record? NextRow()
         {
             if (this.write != null || this.ddl != null)
             {
@@ -698,7 +697,7 @@ namespace IsWiX.WindowsInstaller
             {
                 return null;
             }
-            return new EngineRecord(this.Result.Rows[this.position++]);
+            return new Record(this.Result.Rows[this.position++], this);
         }
 
         /// <summary>Applies one record to the view's table, as MsiViewModify does.</summary>

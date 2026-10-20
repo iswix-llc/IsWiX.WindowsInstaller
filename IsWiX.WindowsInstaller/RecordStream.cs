@@ -61,7 +61,7 @@ namespace IsWiX.WindowsInstaller
             if (count > 0)
             {
                 byte[] readBuffer = (offset == 0 ? buffer : new byte[count]);
-                count = MsiApi.MsiRecordReadStream(this.record.Id, (uint) this.field, readBuffer, count);
+                count = MsiApi.MsiRecordReadStream(this.record, (uint) this.field, readBuffer, count);
                 if (offset > 0)
                 {
                     Array.Copy(readBuffer, 0, buffer, offset, count);

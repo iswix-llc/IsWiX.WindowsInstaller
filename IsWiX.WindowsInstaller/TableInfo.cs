@@ -238,9 +238,7 @@ namespace IsWiX.WindowsInstaller
             }
             else
             {
-                int hrec = MsiApi.MsiDatabaseGetPrimaryKeys(db, table);
-
-                using (Record rec = new Record(hrec, true, null))
+                using (Record rec = MsiApi.MsiDatabaseGetPrimaryKeys(db, table))
                 {
                     string[] keys = new string[rec.FieldCount];
                     for (int i = 0; i < keys.Length; i++)

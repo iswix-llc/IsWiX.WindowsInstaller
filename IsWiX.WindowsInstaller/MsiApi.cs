@@ -163,7 +163,7 @@ namespace IsWiX.WindowsInstaller
             });
         }
 
-        internal static int MsiDatabaseGetPrimaryKeys(Database database, string szTableName)
+        internal static Record MsiDatabaseGetPrimaryKeys(Database database, string szTableName)
         {
             return Guard(() =>
             {
@@ -173,7 +173,7 @@ namespace IsWiX.WindowsInstaller
                 object?[] keys = Array.ConvertAll(
                     System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Where(table.Columns, c => c.IsPrimaryKey)),
                     c => (object?) c.Name);
-                return HandleTable.Add(new EngineRecord(keys));
+                return new Record(keys, (View) null);
             });
         }
 
@@ -228,34 +228,35 @@ namespace IsWiX.WindowsInstaller
             });
         }
 
-        internal static void MsiViewExecute(View view, int hRecord)
+        internal static void MsiViewExecute(View view, Record? record)
         {
             Guard(() =>
             {
                 view.ThrowIfClosed();
-                object?[] markers = hRecord == 0
-                    ? Array.Empty<object?>()
-                    : HandleTable.Get<EngineRecord>(hRecord).Values();
+                if (record != null)
+                {
+                    record.ThrowIfClosed();
+                }
+                object?[] markers = record == null ? Array.Empty<object?>() : record.Values();
                 view.RunStatement(markers);
             });
         }
 
         /// <summary>Fetches the next record, returning its handle, or null when the view has no more records.</summary>
-        internal static int? MsiViewFetch(View view)
+        internal static Record? MsiViewFetch(View view)
         {
             return Guard(() =>
             {
                 view.ThrowIfClosed();
-                EngineRecord? record = view.NextRow();
-                return record == null ? (int?) null : HandleTable.Add(record);
+                return view.NextRow();
             });
         }
 
-        internal static ModifyOutcome MsiViewModify(View view, int iModifyMode, int hRecord)
+        internal static ModifyOutcome MsiViewModify(View view, int iModifyMode, Record record)
         {
             try
             {
-                ModifyRecord(view, iModifyMode, hRecord);
+                ModifyRecord(view, iModifyMode, record);
                 return ModifyOutcome.Ok;
             }
             catch (MsiErrorException e) when (e.Code == (uint) MsiError.FUNCTION_FAILED)
@@ -272,17 +273,17 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        private static void ModifyRecord(View view, int iModifyMode, int hRecord)
+        private static void ModifyRecord(View view, int iModifyMode, Record record)
         {
             view.ThrowIfClosed();
-            EngineRecord record = HandleTable.Get<EngineRecord>(hRecord);
+            record.ThrowIfClosed();
             if (iModifyMode == (int) ViewModifyMode.Refresh || iModifyMode == (int) ViewModifyMode.Seek)
             {
                 // These fill the record in place rather than change the table.
                 object?[] found = view.LookupRow(record.Values());
                 for (int j = 0; j < found.Length; j++)
                 {
-                    record.Set((uint) (j + 1), found[j]);
+                    record.SetValue((uint) (j + 1), found[j]);
                 }
                 return;
             }
@@ -298,7 +299,7 @@ namespace IsWiX.WindowsInstaller
             return (0, string.Empty);
         }
 
-        internal static int MsiViewGetColumnInfo(View view, uint eColumnInfo)
+        internal static Record MsiViewGetColumnInfo(View view, uint eColumnInfo)
         {
             return Guard(() =>
             {
@@ -313,58 +314,39 @@ namespace IsWiX.WindowsInstaller
                     SqlColumn column = columns[i];
                     values[i] = eColumnInfo == 0 ? column.Name : column.TypeCode;
                 }
-                return HandleTable.Add(new EngineRecord(values));
+                return new Record(values, (View) null);
             });
         }
 
-        internal static int MsiCreateRecord(uint cParams)
-        {
-            try
-            {
-                return HandleTable.Add(new EngineRecord((int) cParams));
-            }
-            catch (MsiErrorException)
-            {
-                return 0;
-            }
-        }
-
-        internal static string MsiFormatRecord(int hRecord)
+        internal static string MsiFormatRecord(Record record)
         {
             return Guard(() =>
             {
-                EngineRecord record = HandleTable.Get<EngineRecord>(hRecord);
-                string template = record.GetString(0);
+                record.ThrowIfClosed();
+                string template = record.ReadString(0);
                 return Regex.Replace(template, @"\[(\d+)\]", match =>
                 {
                     int field = int.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
-                    return field >= 1 && field <= record.FieldCount ? record.GetString((uint) field) : match.Value;
+                    return field >= 1 && field <= record.FieldCount ? record.ReadString((uint) field) : match.Value;
                 });
             });
         }
 
-        internal static void MsiRecordClearData(int hRecord)
+        internal static void MsiRecordClearData(Record record)
         {
-            Guard(() => HandleTable.Get<EngineRecord>(hRecord).Clear());
+            Guard(() =>
+            {
+                record.ThrowIfClosed();
+                record.ClearValues();
+            });
         }
 
-        internal static uint MsiRecordGetFieldCount(int hRecord)
+        internal static bool MsiRecordIsNull(Record record, uint iField)
         {
             try
             {
-                return (uint) HandleTable.Get<EngineRecord>(hRecord).FieldCount;
-            }
-            catch (MsiErrorException)
-            {
-                return 0;
-            }
-        }
-
-        internal static bool MsiRecordIsNull(int hRecord, uint iField)
-        {
-            try
-            {
-                return HandleTable.Get<EngineRecord>(hRecord)[iField] == null;
+                record.ThrowIfClosed();
+                return record.ValueAt(iField) == null;
             }
             catch (MsiErrorException)
             {
@@ -372,11 +354,12 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        internal static int MsiRecordGetInteger(int hRecord, uint iField)
+        internal static int MsiRecordGetInteger(Record record, uint iField)
         {
             try
             {
-                return HandleTable.Get<EngineRecord>(hRecord).GetInteger(iField);
+                record.ThrowIfClosed();
+                return record.ReadInteger(iField);
             }
             catch (MsiErrorException)
             {
@@ -384,33 +367,40 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        internal static string MsiRecordGetString(int hRecord, uint iField)
+        internal static string MsiRecordGetString(Record record, uint iField)
         {
-            return Guard(() => HandleTable.Get<EngineRecord>(hRecord).GetString(iField));
+            return Guard(() =>
+            {
+                record.ThrowIfClosed();
+                return record.ReadString(iField);
+            });
         }
 
-        internal static void MsiRecordSetInteger(int hRecord, uint iField, int iValue)
+        internal static void MsiRecordSetInteger(Record record, uint iField, int iValue)
         {
             Guard(() =>
             {
+                record.ThrowIfClosed();
                 // MSI_NULL_INTEGER clears the field.
-                HandleTable.Get<EngineRecord>(hRecord).Set(iField, iValue == int.MinValue ? null : (object) iValue);
+                record.SetValue(iField, iValue == int.MinValue ? null : (object) iValue);
             });
         }
 
-        internal static void MsiRecordSetString(int hRecord, uint iField, string szValue)
+        internal static void MsiRecordSetString(Record record, uint iField, string szValue)
         {
             Guard(() =>
             {
-                HandleTable.Get<EngineRecord>(hRecord).Set(iField, string.IsNullOrEmpty(szValue) ? null : szValue);
+                record.ThrowIfClosed();
+                record.SetValue(iField, string.IsNullOrEmpty(szValue) ? null : szValue);
             });
         }
 
-        internal static uint MsiRecordDataSize(int hRecord, uint iField)
+        internal static uint MsiRecordDataSize(Record record, uint iField)
         {
             try
             {
-                object? value = HandleTable.Get<EngineRecord>(hRecord)[iField];
+                record.ThrowIfClosed();
+                object? value = record.ValueAt(iField);
                 switch (value)
                 {
                     case null:
@@ -434,12 +424,12 @@ namespace IsWiX.WindowsInstaller
         /// the number of bytes read. Each read continues where the previous one stopped, as the Windows Installer
         /// API does.
         /// </summary>
-        internal static int MsiRecordReadStream(int hRecord, uint iField, byte[] buffer, int count)
+        internal static int MsiRecordReadStream(Record record, uint iField, byte[] buffer, int count)
         {
             return Guard(() =>
             {
-                EngineRecord record = HandleTable.Get<EngineRecord>(hRecord);
-                object? value = record[iField];
+                record.ThrowIfClosed();
+                object? value = record.ValueAt(iField);
                 if (value == null)
                 {
                     return 0;
@@ -460,13 +450,13 @@ namespace IsWiX.WindowsInstaller
             });
         }
 
-        internal static void MsiRecordSetStream(int hRecord, uint iField, string szFilePath)
+        internal static void MsiRecordSetStream(Record record, uint iField, string szFilePath)
         {
             Guard(() =>
             {
-                EngineRecord record = HandleTable.Get<EngineRecord>(hRecord);
+                record.ThrowIfClosed();
                 byte[]? data = szFilePath == null ? null : File.ReadAllBytes(szFilePath);
-                record.Set(iField, data);
+                record.SetValue(iField, data);
             });
         }
 
@@ -550,10 +540,10 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        internal static int MsiGetLastErrorRecord()
+        internal static Record? MsiGetLastErrorRecord()
         {
             // Errors are thrown, so there is never a separate error record.
-            return 0;
+            return null;
         }
 
         /// <summary>Returns the system text for an error code, or null when none is available.</summary>

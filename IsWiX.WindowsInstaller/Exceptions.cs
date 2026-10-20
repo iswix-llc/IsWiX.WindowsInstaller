@@ -217,10 +217,10 @@ namespace IsWiX.WindowsInstaller
         internal void SaveErrorRecord()
         {
             // TODO: pass an affinity handle here?
-            int recordHandle = MsiApi.MsiGetLastErrorRecord();
-            if (recordHandle != 0)
+            Record? errorRec = MsiApi.MsiGetLastErrorRecord();
+            if (errorRec != null)
             {
-                using (Record errorRec = new Record(recordHandle, true, null))
+                using (errorRec)
                 {
                     this.errorData = new object[errorRec.FieldCount];
                     for (int i = 0; i < this.errorData.Length; i++)
