@@ -83,4 +83,4 @@ jobs:
           git add IsWiX.WindowsInstaller/IsWiX.WindowsInstaller.csproj
           git commit -m "Release $v"
           git tag "v$v"
-          git push origin dev --follow-tags
+          git push origin main --follow-tags
