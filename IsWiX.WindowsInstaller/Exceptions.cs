@@ -88,27 +88,6 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>
-        /// Gets a message that describes the exception.  This message may contain detailed
-        /// formatted error data if it was available.
-        /// </summary>
-        public override String Message
-        {
-            get
-            {
-                string msg = base.Message;
-                using (Record errorRec = this.GetErrorRecord())
-                {
-                    if (errorRec != null)
-                    {
-                        string errorMsg = Installer.GetErrorMessage(errorRec, CultureInfo.InvariantCulture);
-                        msg = Combine(msg, errorMsg);
-                    }
-                }
-                return msg;
-            }
-        }
-
-        /// <summary>
         /// Sets the SerializationInfo with information about the exception.
         /// </summary>
         /// <param name="info">The SerializationInfo that holds the serialized object data about the exception being thrown.</param>

@@ -7,7 +7,7 @@ namespace ConsoleApp1
     {
         static void Main(string[] args)
         {
-            //using(Database database = new Database(@"D:\fusion-1.0.5.msi", DatabaseOpenMode.ReadOnly))
+            //using (Database database = new Database(@"D:\fusion-1.0.5.msi", DatabaseOpenMode.ReadOnly))
             //{
             //    using (View view = database.OpenView("SELECT * FROM Property"))
             //    {

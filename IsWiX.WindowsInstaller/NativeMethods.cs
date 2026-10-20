@@ -114,7 +114,6 @@ internal static class NativeMethods
 
 [DllImport("msi.dll", CharSet=CharSet.Unicode)] internal static extern uint MsiSetInternalUI(uint dwUILevel, ref IntPtr phWnd);
 [DllImport("msi.dll", CharSet=CharSet.Unicode)] internal static extern uint MsiSetInternalUI(uint dwUILevel, IntPtr phWnd);
-[DllImport("msi.dll", CharSet=CharSet.Unicode)] internal static extern NativeExternalUIHandler MsiSetExternalUI([MarshalAs(UnmanagedType.FunctionPtr)] NativeExternalUIHandler puiHandler, uint dwMessageFilter, IntPtr pvContext); 
 [DllImport("msi.dll", CharSet=CharSet.Unicode)] internal static extern uint MsiEnableLog(uint dwLogMode, string szLogFile, uint dwLogAttributes);
 //[DllImport("msi.dll", CharSet=CharSet.Unicode)] internal static extern uint MsiEnumProducts(uint iProductIndex, StringBuilder lpProductBuf);
 [DllImport("msi.dll", CharSet=CharSet.Unicode)] internal static extern uint MsiGetProductInfo(string szProduct, string szProperty, StringBuilder lpValueBuf, ref uint pcchValueBuf);
@@ -249,8 +248,6 @@ internal static class NativeMethods
 [DllImport("msi.dll", CharSet=CharSet.Unicode)] internal static extern uint MsiSourceListAddMediaDisk(string szProductCodeOrPatchCode, string szUserSid, [MarshalAs(UnmanagedType.I4)] UserContexts dwContext, uint dwOptions, uint dwDiskId, string szVolumeLabel, string szDiskPrompt);
 [DllImport("msi.dll", CharSet=CharSet.Unicode)] internal static extern uint MsiSourceListClearMediaDisk(string szProductCodeOrPatchCode, string szUserSid, [MarshalAs(UnmanagedType.I4)] UserContexts dwContext, uint dwOptions, uint dwDiskID);
 [DllImport("msi.dll", CharSet=CharSet.Unicode)] internal static extern uint MsiNotifySidChange(string szOldSid, string szNewSid);
-[DllImport("msi.dll", CharSet=CharSet.Unicode)] internal static extern uint MsiSetExternalUIRecord([MarshalAs(UnmanagedType.FunctionPtr)] NativeExternalUIRecordHandler puiHandler, uint dwMessageFilter, IntPtr pvContext, out NativeExternalUIRecordHandler ppuiPrevHandler);
-
 [DllImport("msi.dll", CharSet=CharSet.Unicode)] internal static extern uint MsiGetPatchFileList(string szProductCode, string szPatchList, out uint cFiles, out IntPtr phFileRecords);
 
 [DllImport("msi.dll", CharSet=CharSet.Unicode)] internal static extern uint MsiBeginTransaction(string szTransactionName, int dwTransactionAttributes, out int hTransaction, out IntPtr phChangeOfOwnerEvent);
@@ -302,7 +299,7 @@ internal static class NativeMethods
 
         protected override bool ReleaseHandle()
         {
-            return RemotableNativeMethods.MsiCloseHandle((int) this.handle) == 0;
+                return true;
         }
     }
 }

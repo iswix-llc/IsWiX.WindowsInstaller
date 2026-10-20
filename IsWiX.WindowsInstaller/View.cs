@@ -470,27 +470,6 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>
-        /// Validates a record, returning information about any errors.
-        /// </summary>
-        /// <param name="record">the Record to be validated</param>
-        /// <returns>null if the record was validated; if there is an existing record with
-        /// the same primary keys that has conflicting data then error information is returned</returns>
-        /// <exception cref="InstallerException">the validation failed (for a reason other than invalid data)</exception>
-        /// <exception cref="InvalidHandleException">the View handle is invalid</exception>
-        /// <remarks><p>
-        /// The Record must have been obtained by calling <see cref="Fetch"/>.
-        /// Works with read-write and read-only records. This method cannot be used
-        /// with a View containing joins.
-        /// </p><p>
-        /// See <see cref="Modify"/> for more remarks.
-        /// </p><p>
-        /// Win32 MSI APIs:
-        /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msiviewmodify.asp">MsiViewModify</a>,
-        /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msiviewgeterror.asp">MsiViewGetError</a>
-        /// </p></remarks>
-        public ICollection<ValidationErrorInfo> Validate(Record record) { return this.InternalValidate(ViewModifyMode.Validate, record); }
-
-        /// <summary>
         /// Validates a new record, returning information about any errors.
         /// </summary>
         /// <param name="record">the Record to be validated</param>
