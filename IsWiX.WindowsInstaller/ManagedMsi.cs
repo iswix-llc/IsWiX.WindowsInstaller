@@ -233,7 +233,7 @@ namespace IsWiX.WindowsInstaller
             }
 
             var writeTables = new List<MsiWriteTable>();
-            var streams = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            var streams = new Dictionary<string, StreamSource>(StringComparer.Ordinal);
             var binaryNames = new HashSet<string>(StringComparer.Ordinal);
             var binaryTables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (string name in this.AllTableNames())
@@ -261,9 +261,13 @@ namespace IsWiX.WindowsInstaller
                         if (streamName != null)
                         {
                             binaryNames.Add(streamName);
-                            if (LazyBinary.Resolve(row[i]) is byte[] data)
+                            if (row[i] is LazyBinary lazy)
                             {
-                                streams[streamName] = data;
+                                streams[streamName] = new StreamSource(lazy.Length, () => lazy.Read() ?? Array.Empty<byte>());
+                            }
+                            else if (row[i] is byte[] data)
+                            {
+                                streams[streamName] = StreamSource.Of(data);
                             }
                         }
                         copy[i] = null;
@@ -282,15 +286,15 @@ namespace IsWiX.WindowsInstaller
                 {
                     continue;
                 }
-                byte[]? data = this.ReadPlainStream(name);
-                if (data != null)
+                long? length = this.reader.StreamLength(name);
+                if (length is long size)
                 {
-                    streams[name] = data;
+                    streams[name] = new StreamSource(size, () => this.ReadPlainStream(name) ?? Array.Empty<byte>());
                 }
             }
             foreach (KeyValuePair<string, byte[]> pending in this.pendingStreams)
             {
-                streams[pending.Key] = pending.Value;
+                streams[pending.Key] = StreamSource.Of(pending.Value);
             }
 
             int codePage = this.CodePage;
@@ -301,7 +305,7 @@ namespace IsWiX.WindowsInstaller
             {
                 using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 {
-                    MsiWriter.Write(output, codePage, writeTables, streams);
+                    MsiWriter.WriteSources(output, codePage, writeTables, streams);
                 }
                 this.reader.Dispose();
                 File.Move(temp, this.path, overwrite: true);
@@ -1126,8 +1130,9 @@ namespace IsWiX.WindowsInstaller
                     {
                         // The bytes stay in the file until something needs them.
                         string? streamName = row.BinaryStreamName(columns[i].Name);
-                        values[i] = streamName != null && this.reader.HasStream(streamName)
-                            ? new LazyBinary(() => this.ReadPlainStream(streamName))
+                        long? length = streamName == null ? null : this.reader.StreamLength(streamName);
+                        values[i] = length is long size
+                            ? new LazyBinary(size, () => this.ReadPlainStream(streamName!))
                             : null;
                     }
                     else
@@ -1196,7 +1201,7 @@ namespace IsWiX.WindowsInstaller
             var rows = new List<object?[]>();
             foreach (string name in this.reader.StreamNames)
             {
-                rows.Add(new object?[] { name, new LazyBinary(() => this.ReadPlainStream(name)) });
+                rows.Add(new object?[] { name, new LazyBinary(this.reader.StreamLength(name) ?? 0, () => this.ReadPlainStream(name)) });
             }
             return new SqlTable("_Streams", columns, rows);
         }

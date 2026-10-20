@@ -168,9 +168,13 @@ internal sealed class CompoundFile
     {
         // A chain of sectors can be read without knowing its length in advance,
         // but we cap the result at `size` bytes (or the whole chain when size is unbounded).
-        var buffer = new MemoryStream();
+        // A stream of known size is copied straight into an array of that size, so it is not grown and copied again.
+        bool bounded = size != long.MaxValue;
+        var result = bounded ? new byte[size] : null;
+        var buffer = bounded ? null : new MemoryStream();
         uint sec = start;
         long remaining = size;
+        long written = 0;
         int guard = 0;
         while (sec <= MaxRegSect && remaining > 0)
         {
@@ -178,13 +182,17 @@ internal sealed class CompoundFile
                 throw new MsiFormatException("Cycle detected in a sector chain.");
             var data = ReadSector(sec);
             int take = (int)Math.Min(sectorSize, remaining);
-            buffer.Write(data, 0, take);
+            if (bounded)
+                Buffer.BlockCopy(data, 0, result!, (int)written, take);
+            else
+                buffer!.Write(data, 0, take);
+            written += take;
             remaining -= take;
             sec = NextSector(fat, sec);
         }
-        if (remaining > 0 && size != long.MaxValue)
+        if (remaining > 0 && bounded)
             throw new MsiFormatException("Sector chain is shorter than the stream size.");
-        return buffer.ToArray();
+        return bounded ? result! : buffer!.ToArray();
     }
 
     private static uint NextSector(uint[] fat, uint sec)

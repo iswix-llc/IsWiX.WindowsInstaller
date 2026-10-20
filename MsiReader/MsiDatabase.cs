@@ -110,8 +110,9 @@ public sealed class MsiDatabase : IDisposable
     public MsiTable GetTable(string name) =>
         TryGetTable(name, out var t) ? t : throw new KeyNotFoundException($"No table named '{name}'.");
 
-    /// <summary>True when a non-table stream with this decoded name exists. Reads nothing.</summary>
-    public bool HasStream(string streamName) => _plainStreams.ContainsKey(streamName);
+    /// <summary>The size of a non-table stream in bytes, or null if no such stream exists. Reads nothing.</summary>
+    public long? StreamLength(string streamName) =>
+        _plainStreams.TryGetValue(streamName, out var entry) ? (long) entry.Size : null;
 
     /// <summary>Reads a non-table stream by its decoded name, or returns null if it does not exist.</summary>
     public byte[]? ReadStream(string streamName)

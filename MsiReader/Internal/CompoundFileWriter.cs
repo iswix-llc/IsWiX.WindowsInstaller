@@ -20,17 +20,23 @@ internal static class CompoundFileWriter
 
     private sealed class Item
     {
-        public Item(string name, byte[] data)
+        public Item(string name, long length, Func<byte[]> read)
         {
+            if (length > int.MaxValue)
+                throw new ArgumentException($"Stream '{name}' is too large.");
             Name = name;
-            Data = data;
+            Length = length;
+            Read = read;
         }
 
         public string Name { get; }
-        public byte[] Data { get; }
-        public bool IsMini => Data.Length > 0 && Data.Length < MiniStreamCutoff;
-        public int RegularSectors => (Data.Length + SectorSize - 1) / SectorSize;
-        public int MiniSectors => (Data.Length + MiniSectorSize - 1) / MiniSectorSize;
+        public long Length { get; }
+
+        /// <summary>Returns the bytes of the stream. Called when the stream is written, so most streams are never held at once.</summary>
+        public Func<byte[]> Read { get; }
+        public bool IsMini => Length > 0 && Length < MiniStreamCutoff;
+        public int RegularSectors => (int) ((Length + SectorSize - 1) / SectorSize);
+        public int MiniSectors => (int) ((Length + MiniSectorSize - 1) / MiniSectorSize);
 
         /// <summary>First sector of the stream, in the regular or the mini sector space.</summary>
         public uint Start { get; set; } = EndOfChain;
@@ -40,9 +46,9 @@ internal static class CompoundFileWriter
         public int RightIndex { get; set; } = -1;
     }
 
-    public static void Write(Stream output, IReadOnlyList<(string Name, byte[] Data)> streams)
+    public static void Write(Stream output, IReadOnlyList<(string Name, long Length, Func<byte[]> Read)> streams)
     {
-        var items = streams.Select(s => new Item(s.Name, s.Data)).ToList();
+        var items = streams.Select(s => new Item(s.Name, s.Length, s.Read)).ToList();
         items.Sort((a, b) => CompareNames(a.Name, b.Name));
         for (int i = 0; i < items.Count; i++)
         {
@@ -76,7 +82,7 @@ internal static class CompoundFileWriter
 
         // Lay out the sectors: directory, regular streams, mini container, mini FAT, DIFAT, FAT.
         int next = dirSectors;
-        foreach (var item in items.Where(i => !i.IsMini && i.Data.Length > 0))
+        foreach (var item in items.Where(i => !i.IsMini && i.Length > 0))
         {
             item.Start = (uint) next;
             next += item.RegularSectors;
@@ -100,7 +106,7 @@ internal static class CompoundFileWriter
         var fat = new uint[fatSectors * FatEntriesPerSector];
         Array.Fill(fat, FreeSector);
         ChainRun(fat, 0, dirSectors);
-        foreach (var item in items.Where(i => !i.IsMini && i.Data.Length > 0))
+        foreach (var item in items.Where(i => !i.IsMini && i.Length > 0))
             ChainRun(fat, (int) item.Start, item.RegularSectors);
         if (containerSectors > 0) ChainRun(fat, containerStart, containerSectors);
         if (miniFatSectors > 0) ChainRun(fat, miniFatStart, miniFatSectors);
@@ -119,19 +125,21 @@ internal static class CompoundFileWriter
             }
         }
 
-        // Body: everything after the 512-byte header.
-        var body = new byte[totalSectors * SectorSize];
+        // Only the metadata sectors are held in memory. Regular streams are read one at a time while writing.
+        var dirBuf = new byte[dirSectors * SectorSize];
         var container = new byte[containerSectors * SectorSize];
         foreach (var item in mini)
-            Array.Copy(item.Data, 0, container, (int) item.Start * MiniSectorSize, item.Data.Length);
-        if (containerSectors > 0)
-            Array.Copy(container, 0, body, containerStart * SectorSize, container.Length);
-        foreach (var item in items.Where(i => !i.IsMini && i.Data.Length > 0))
-            Array.Copy(item.Data, 0, body, (int) item.Start * SectorSize, item.Data.Length);
+        {
+            byte[] data = ReadItem(item);
+            Array.Copy(data, 0, container, (int) item.Start * MiniSectorSize, data.Length);
+        }
+        var miniFatBuf = new byte[miniFatSectors * SectorSize];
+        var fatBuf = new byte[fatSectors * SectorSize];
+        var difatBuf = new byte[difatSectors * SectorSize];
 
-        WriteDirectory(body, items, rootChild, miniSectorTotal, containerStart, maxDepth);
-        Words(miniFat, body, miniFatStart);
-        Words(fat, body, fatStart);
+        WriteDirectory(dirBuf, items, rootChild, miniSectorTotal, containerStart, maxDepth);
+        Words(miniFat, miniFatBuf, 0);
+        Words(fat, fatBuf, 0);
 
         // DIFAT sectors list the FAT sectors beyond the 109 held in the header.
         for (int k = 0; k < difatSectors; k++)
@@ -144,7 +152,7 @@ internal static class CompoundFileWriter
                 if (fatIndex < fatSectors) sector[j] = (uint) (fatStart + fatIndex);
             }
             sector[FatEntriesPerSector - 1] = k == difatSectors - 1 ? EndOfChain : (uint) (difatStart + k + 1);
-            Words(sector, body, difatStart + k);
+            Words(sector, difatBuf, k);
         }
 
         var header = new byte[SectorSize];
@@ -166,7 +174,19 @@ internal static class CompoundFileWriter
             Put32(header, 76 + k * 4, k < fatSectors ? (uint) (fatStart + k) : FreeSector);
 
         output.Write(header, 0, header.Length);
-        output.Write(body, 0, body.Length);
+        // The sectors are laid out in this order: directory, regular streams, mini container, mini FAT, DIFAT, FAT.
+        output.Write(dirBuf, 0, dirBuf.Length);
+        var zeros = new byte[SectorSize];
+        foreach (var item in items.Where(i => !i.IsMini && i.Length > 0).OrderBy(i => i.Start))
+        {
+            byte[] data = ReadItem(item);
+            output.Write(data, 0, data.Length);
+            output.Write(zeros, 0, item.RegularSectors * SectorSize - data.Length);
+        }
+        if (containerSectors > 0) output.Write(container, 0, container.Length);
+        if (miniFatSectors > 0) output.Write(miniFatBuf, 0, miniFatBuf.Length);
+        if (difatSectors > 0) output.Write(difatBuf, 0, difatBuf.Length);
+        output.Write(fatBuf, 0, fatBuf.Length);
     }
 
     private static int BuildTree(List<Item> items, int lo, int hi, int depth)
@@ -206,7 +226,7 @@ internal static class CompoundFileWriter
             WriteEntry(dir, item.DirectoryIndex, item.Name, 2, color,
                 item.LeftIndex < 0 ? NoStream : (uint) item.LeftIndex,
                 item.RightIndex < 0 ? NoStream : (uint) item.RightIndex,
-                NoStream, item.Data.Length == 0 ? EndOfChain : item.Start, (ulong) item.Data.Length);
+                NoStream, item.Length == 0 ? EndOfChain : item.Start, (ulong) item.Length);
         }
 
         Array.Copy(dir, 0, body, 0, dir.Length);
@@ -233,6 +253,15 @@ internal static class CompoundFileWriter
     {
         for (int k = 0; k < count; k++)
             fat[start + k] = k == count - 1 ? EndOfChain : (uint) (start + k + 1);
+    }
+
+    /// <summary>Reads a stream and checks it still has the length the layout was planned with.</summary>
+    private static byte[] ReadItem(Item item)
+    {
+        byte[] data = item.Read();
+        if (data.Length != item.Length)
+            throw new ArgumentException($"Stream '{item.Name}' changed size while it was written.");
+        return data;
     }
 
     private static void Words(uint[] values, byte[] body, int sector)

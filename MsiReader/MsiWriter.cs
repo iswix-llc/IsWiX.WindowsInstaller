@@ -48,6 +48,12 @@ public sealed class MsiWriteTable
     public IReadOnlyList<object?[]> Rows { get; }
 }
 
+/// <summary>A stream to write: its length, and a function that returns its bytes when the writer needs them.</summary>
+public readonly record struct StreamSource(long Length, Func<byte[]> Read)
+{
+    public static StreamSource Of(byte[] data) => new StreamSource(data.Length, () => data);
+}
+
 /// <summary>Writes an MSI database from tables and streams. Output can be read back by <see cref="MsiDatabase"/>.</summary>
 public static class MsiWriter
 {
@@ -67,6 +73,16 @@ public static class MsiWriter
     /// <param name="tables">The tables. The names _Tables, _Columns, _StringPool and _StringData are reserved.</param>
     /// <param name="streams">Plain streams by decoded name, such as binary data and the summary information stream.</param>
     public static void Write(Stream output, int codePage, IReadOnlyList<MsiWriteTable> tables, IReadOnlyDictionary<string, byte[]>? streams = null)
+    {
+        var sources = streams?.ToDictionary(p => p.Key, p => StreamSource.Of(p.Value), StringComparer.Ordinal);
+        WriteSources(output, codePage, tables, sources);
+    }
+
+    /// <summary>
+    /// Writes an MSI like <see cref="Write"/>, but each plain stream is given by its length and a reader, so a large
+    /// stream is read only while it is being written.
+    /// </summary>
+    public static void WriteSources(Stream output, int codePage, IReadOnlyList<MsiWriteTable> tables, IReadOnlyDictionary<string, StreamSource>? streams = null)
     {
         ArgumentNullException.ThrowIfNull(output);
         ArgumentNullException.ThrowIfNull(tables);
@@ -92,30 +108,32 @@ public static class MsiWriter
         var pooled = pool.Build(codePage);
         int width = pooled.BytesPerRef;
 
-        var streamList = new List<(string Name, byte[] Data)>
+        var streamList = new List<(string Name, long Length, Func<byte[]> Read)>
         {
-            (StreamNameCodec.TablePrefix + StreamNameCodec.Encode("_StringPool"), pooled.Pool),
-            (StreamNameCodec.TablePrefix + StreamNameCodec.Encode("_StringData"), pooled.Data),
-            (StreamNameCodec.TablePrefix + StreamNameCodec.Encode("_Tables"), SerializeColumns(systemTables.TablesCells, width)),
-            (StreamNameCodec.TablePrefix + StreamNameCodec.Encode("_Columns"), SerializeColumns(systemTables.ColumnsCells, width)),
+            Bytes(StreamNameCodec.TablePrefix + StreamNameCodec.Encode("_StringPool"), pooled.Pool),
+            Bytes(StreamNameCodec.TablePrefix + StreamNameCodec.Encode("_StringData"), pooled.Data),
+            Bytes(StreamNameCodec.TablePrefix + StreamNameCodec.Encode("_Tables"), SerializeColumns(systemTables.TablesCells, width)),
+            Bytes(StreamNameCodec.TablePrefix + StreamNameCodec.Encode("_Columns"), SerializeColumns(systemTables.ColumnsCells, width)),
         };
         foreach (var table in prepared)
         {
-            streamList.Add((StreamNameCodec.TablePrefix + StreamNameCodec.Encode(table.Name), SerializeColumns(table.Cells, width)));
+            streamList.Add(Bytes(StreamNameCodec.TablePrefix + StreamNameCodec.Encode(table.Name), SerializeColumns(table.Cells, width)));
         }
         if (streams != null)
         {
-            foreach (var (name, data) in streams)
+            foreach (var (name, source) in streams)
             {
                 if (name.Length > 0 && name[0] == StreamNameCodec.TablePrefix)
                     throw new ArgumentException($"Stream '{name}' uses the reserved table prefix.");
                 // Names starting with U+0005 are OLE property sets, such as the summary information, and are stored as written.
-                streamList.Add((name[0] == '\u0005' ? name : StreamNameCodec.Encode(name), data));
+                streamList.Add((name[0] == '\u0005' ? name : StreamNameCodec.Encode(name), source.Length, source.Read));
             }
         }
 
         CompoundFileWriter.Write(output, streamList);
     }
+
+    private static (string Name, long Length, Func<byte[]> Read) Bytes(string name, byte[] data) => (name, data.Length, () => data);
 
     private sealed class PreparedTable
     {

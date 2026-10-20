@@ -16,10 +16,14 @@ namespace IsWiX.WindowsInstaller
     {
         private readonly Func<byte[]?> read;
 
-        public LazyBinary(Func<byte[]?> read)
+        public LazyBinary(long length, Func<byte[]?> read)
         {
+            this.Length = length;
             this.read = read;
         }
+
+        /// <summary>The size of the stream, known without reading it.</summary>
+        public long Length { get; }
 
         public byte[]? Read() => this.read();
 
