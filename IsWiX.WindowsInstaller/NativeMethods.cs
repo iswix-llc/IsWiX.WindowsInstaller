@@ -170,12 +170,13 @@ namespace IsWiX.WindowsInstaller
             int handle = 0;
             uint result = Guard(() =>
             {
-                // MSIDBOPEN_READONLY is 0; the other modes write to the database and are not supported yet.
-                if (uiOpenMode != IntPtr.Zero)
+                // MSIDBOPEN_READONLY (0), MSIDBOPEN_TRANSACT (1) and MSIDBOPEN_DIRECT (2). Create modes are not supported yet.
+                long mode = uiOpenMode.ToInt64();
+                if (mode < 0 || mode > 2)
                 {
                     throw new MsiErrorException((uint) Error.CALL_NOT_IMPLEMENTED);
                 }
-                handle = ManagedHandles.Add(ManagedDatabase.Open(szDatabasePath));
+                handle = ManagedHandles.Add(ManagedDatabase.Open(szDatabasePath, (DatabaseMode) mode));
             });
             hDatabase = handle;
             return result;
@@ -210,8 +211,11 @@ namespace IsWiX.WindowsInstaller
                 {
                     throw new MsiErrorException((uint) Error.INVALID_PARAMETER);
                 }
-                var parsed = new SqlParser(szQuery).Parse();
-                handle = ManagedHandles.Add(new ManagedView(BoundSelect.Bind(parsed, database)));
+                SqlStatement statement = new SqlParser(szQuery).ParseStatement();
+                ManagedView view = statement is SqlSelect select
+                    ? new ManagedView(database, BoundSelect.Bind(select, database))
+                    : new ManagedView(database, BoundWrite.Bind(statement, database));
+                handle = ManagedHandles.Add(view);
             });
             hView = handle;
             return result;
@@ -224,7 +228,7 @@ namespace IsWiX.WindowsInstaller
 
         internal static uint MsiDatabaseCommit(int hDatabase)
         {
-            return (uint) Error.CALL_NOT_IMPLEMENTED;
+            return Guard(() => ManagedHandles.Get<ManagedDatabase>(hDatabase).Commit());
         }
 
         internal static uint MsiDatabaseGetPrimaryKeys(int hDatabase, string szTableName, out int hRecord)
@@ -309,7 +313,12 @@ namespace IsWiX.WindowsInstaller
 
         internal static uint MsiViewModify(int hView, int iModifyMode, int hRecord)
         {
-            return (uint) Error.CALL_NOT_IMPLEMENTED;
+            return Guard(() =>
+            {
+                ManagedView view = ManagedHandles.Get<ManagedView>(hView);
+                object?[] values = ManagedHandles.Get<ManagedRecord>(hRecord).Values();
+                view.Modify(iModifyMode, values);
+            });
         }
 
         internal static int MsiViewGetError(int hView, StringBuilder szColumnNameBuffer, ref uint cchBuf)
@@ -331,7 +340,8 @@ namespace IsWiX.WindowsInstaller
             uint result = Guard(() =>
             {
                 ManagedView view = ManagedHandles.Get<ManagedView>(hView);
-                IReadOnlyList<SqlColumn> columns = view.Query.OutputColumns;
+                IReadOnlyList<SqlColumn> columns = view.Query?.OutputColumns
+                    ?? throw new MsiErrorException((uint) Error.FUNCTION_FAILED);
 
                 // MSICOLINFO_NAMES is 0 and MSICOLINFO_TYPES is 1.
                 var values = new object?[columns.Count];
@@ -516,25 +526,66 @@ namespace IsWiX.WindowsInstaller
 
         internal static uint MsiGetSummaryInformation(int hDatabase, string szDatabasePath, uint uiUpdateCount, out int hSummaryInfo)
         {
-            hSummaryInfo = 0;
-            return (uint) Error.CALL_NOT_IMPLEMENTED;
+            int handle = 0;
+            uint result = Guard(() =>
+            {
+                // A non-zero update count asks for a handle that can be written.
+                bool writable = uiUpdateCount > 0;
+                ManagedSummary summary;
+                if (hDatabase != 0)
+                {
+                    ManagedDatabase database = ManagedHandles.Get<ManagedDatabase>(hDatabase);
+                    if (writable)
+                    {
+                        database.RequireWritable();
+                    }
+                    summary = ManagedSummary.Open(database, ownsDatabase: false, writable);
+                }
+                else
+                {
+                    if (szDatabasePath == null)
+                    {
+                        throw new MsiErrorException((uint) Error.INVALID_PARAMETER);
+                    }
+                    ManagedDatabase database = ManagedDatabase.Open(szDatabasePath,
+                        writable ? DatabaseMode.Transact : DatabaseMode.ReadOnly);
+                    summary = ManagedSummary.Open(database, ownsDatabase: true, writable);
+                }
+                handle = ManagedHandles.Add(summary);
+            });
+            hSummaryInfo = handle;
+            return result;
         }
 
         internal static uint MsiSummaryInfoGetProperty(int hSummaryInfo, uint uiProperty, out uint uiDataType, out int iValue, ref long ftValue, StringBuilder szValueBuf, ref uint cchValueBuf)
         {
-            uiDataType = 0;
-            iValue = 0;
-            return (uint) Error.CALL_NOT_IMPLEMENTED;
+            uint type = 0;
+            int number = 0;
+            long fileTime = 0;
+            string? text = null;
+            uint result = Guard(() => ManagedHandles.Get<ManagedSummary>(hSummaryInfo)
+                .Get(uiProperty, out type, out number, out fileTime, out text));
+
+            uiDataType = type;
+            iValue = number;
+            ftValue = fileTime;
+            if (result == 0 && type == SummaryStream.VtLpstr)
+            {
+                result = WriteString(text ?? string.Empty, szValueBuf, ref cchValueBuf);
+            }
+            return result;
         }
 
         internal static uint MsiSummaryInfoSetProperty(int hSummaryInfo, uint uiProperty, uint uiDataType, int iValue, ref long ftValue, string szValue)
         {
-            return (uint) Error.CALL_NOT_IMPLEMENTED;
+            long fileTime = ftValue;
+            return Guard(() => ManagedHandles.Get<ManagedSummary>(hSummaryInfo)
+                .Set(uiProperty, uiDataType, iValue, fileTime, szValue));
         }
 
         internal static uint MsiSummaryInfoPersist(int hSummaryInfo)
         {
-            return (uint) Error.CALL_NOT_IMPLEMENTED;
+            return Guard(() => ManagedHandles.Get<ManagedSummary>(hSummaryInfo).Persist());
         }
 
         internal static uint MsiCloseHandle(int hAny)

@@ -4,7 +4,10 @@
 // A condition is operand op operand, or column IS [NOT] NULL, joined with AND, OR and parentheses.
 // Operands are columns (optionally table.column), 'strings', integers or ? parameter markers.
 // Tables in the FROM list are joined as inner joins; join conditions are written in WHERE.
-// Statements that change the database (INSERT, UPDATE, DELETE, CREATE, DROP, ALTER) are not supported yet.
+//   INSERT INTO table (column[, column]...) VALUES (value[, value]...)
+//   UPDATE table SET column = value[, column = value]... [WHERE condition]
+//   DELETE FROM table [WHERE condition]
+// A value is a number, a 'string' or a ? parameter marker. CREATE, DROP and ALTER are not supported yet.
 namespace IsWiX.WindowsInstaller
 {
     using System;
@@ -187,7 +190,38 @@ namespace IsWiX.WindowsInstaller
 
     internal sealed record SqlNullCondition(SqlColumnRef Column, bool Negated) : SqlCondition;
 
-    internal sealed class SqlSelect
+    /// <summary>A parsed statement. MarkerCount is the number of ? parameters it uses.</summary>
+    internal abstract class SqlStatement
+    {
+        public int MarkerCount { get; set; }
+    }
+
+    internal sealed class SqlInsert : SqlStatement
+    {
+        public string Table { get; set; } = string.Empty;
+
+        public List<string> Columns { get; } = new List<string>();
+
+        public List<SqlOperand> Values { get; } = new List<SqlOperand>();
+    }
+
+    internal sealed class SqlUpdate : SqlStatement
+    {
+        public string Table { get; set; } = string.Empty;
+
+        public List<(string Column, SqlOperand Value)> Assignments { get; } = new List<(string, SqlOperand)>();
+
+        public SqlCondition? Where { get; set; }
+    }
+
+    internal sealed class SqlDelete : SqlStatement
+    {
+        public string Table { get; set; } = string.Empty;
+
+        public SqlCondition? Where { get; set; }
+    }
+
+    internal sealed class SqlSelect : SqlStatement
     {
         public bool Distinct { get; set; }
 
@@ -200,7 +234,6 @@ namespace IsWiX.WindowsInstaller
 
         public List<SqlColumnRef> OrderBy { get; } = new List<SqlColumnRef>();
 
-        public int MarkerCount { get; set; }
     }
 
     internal sealed class SqlParser
@@ -214,18 +247,111 @@ namespace IsWiX.WindowsInstaller
             this.tokens = SqlLexer.Tokenize(sql);
         }
 
-        public SqlSelect Parse()
+        public SqlStatement ParseStatement()
         {
             if (this.IsKeyword("SELECT"))
             {
                 return this.ParseSelect();
             }
-            if (this.IsKeyword("INSERT") || this.IsKeyword("UPDATE") || this.IsKeyword("DELETE")
-                || this.IsKeyword("CREATE") || this.IsKeyword("DROP") || this.IsKeyword("ALTER"))
+            if (this.IsKeyword("INSERT"))
+            {
+                return this.ParseInsert();
+            }
+            if (this.IsKeyword("UPDATE"))
+            {
+                return this.ParseUpdate();
+            }
+            if (this.IsKeyword("DELETE"))
+            {
+                return this.ParseDelete();
+            }
+            if (this.IsKeyword("CREATE") || this.IsKeyword("DROP") || this.IsKeyword("ALTER"))
             {
                 throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
             }
             throw SqlErrors.Syntax();
+        }
+
+        private SqlInsert ParseInsert()
+        {
+            this.ExpectKeyword("INSERT");
+            this.ExpectKeyword("INTO");
+            var insert = new SqlInsert { Table = this.ExpectName() };
+            this.ExpectSymbol("(");
+            insert.Columns.Add(this.ExpectName());
+            while (this.TrySymbol(","))
+            {
+                insert.Columns.Add(this.ExpectName());
+            }
+            this.ExpectSymbol(")");
+            this.ExpectKeyword("VALUES");
+            this.ExpectSymbol("(");
+            insert.Values.Add(this.ParseValue());
+            while (this.TrySymbol(","))
+            {
+                insert.Values.Add(this.ParseValue());
+            }
+            this.ExpectSymbol(")");
+            this.ExpectEnd();
+            if (insert.Columns.Count != insert.Values.Count)
+            {
+                throw SqlErrors.Syntax();
+            }
+            insert.MarkerCount = this.markers;
+            return insert;
+        }
+
+        private SqlUpdate ParseUpdate()
+        {
+            this.ExpectKeyword("UPDATE");
+            var update = new SqlUpdate { Table = this.ExpectName() };
+            this.ExpectKeyword("SET");
+            do
+            {
+                string column = this.ExpectName();
+                this.ExpectSymbol("=");
+                update.Assignments.Add((column, this.ParseValue()));
+            }
+            while (this.TrySymbol(","));
+            if (this.TryKeyword("WHERE"))
+            {
+                update.Where = this.ParseOr();
+            }
+            this.ExpectEnd();
+            update.MarkerCount = this.markers;
+            return update;
+        }
+
+        private SqlDelete ParseDelete()
+        {
+            this.ExpectKeyword("DELETE");
+            this.ExpectKeyword("FROM");
+            var delete = new SqlDelete { Table = this.ExpectName() };
+            if (this.TryKeyword("WHERE"))
+            {
+                delete.Where = this.ParseOr();
+            }
+            this.ExpectEnd();
+            delete.MarkerCount = this.markers;
+            return delete;
+        }
+
+        /// <summary>A value to store: a literal or a parameter marker, never a column.</summary>
+        private SqlOperand ParseValue()
+        {
+            if (this.Current.Kind == SqlTokenKind.Identifier)
+            {
+                throw SqlErrors.Syntax();
+            }
+            return this.ParseOperand();
+        }
+
+        private void ExpectEnd()
+        {
+            if (this.Current.Kind != SqlTokenKind.End)
+            {
+                throw SqlErrors.Syntax();
+            }
         }
 
         private SqlSelect ParseSelect()
@@ -269,11 +395,7 @@ namespace IsWiX.WindowsInstaller
                 }
             }
 
-            if (this.Current.Kind != SqlTokenKind.End)
-            {
-                throw SqlErrors.Syntax();
-            }
-
+            this.ExpectEnd();
             select.MarkerCount = this.markers;
             return select;
         }
@@ -484,6 +606,42 @@ namespace IsWiX.WindowsInstaller
         }
 
         public int MarkerCount { get; }
+
+        /// <summary>True for a query over one table with no WHERE, ORDER BY or DISTINCT. Such views can be modified.</summary>
+        public bool IsSingleTableWithoutFilter =>
+            this.tables.Count == 1 && this.filter == null && this.orderKeys.Length == 0 && !this.distinct;
+
+        /// <summary>The one table of a single-table query.</summary>
+        public SqlTable SingleTable => this.tables[0];
+
+        /// <summary>For each output column, the index of its column in the table (single-table queries only).</summary>
+        public int[] TableColumnIndexes => this.projection
+            ?? Enumerable.Range(0, this.tables[0].Columns.Count).ToArray();
+
+        /// <summary>Binds a WHERE condition over the columns of one table. The result takes a row and the markers.</summary>
+        public static Func<object?[], object?[], bool> BindTableCondition(SqlCondition condition, SqlTable table)
+        {
+            int Resolve(SqlColumnRef reference)
+            {
+                int found = -1;
+                int count = 0;
+                for (int i = 0; i < table.Columns.Count; i++)
+                {
+                    if (table.Columns[i].Name != reference.Name || (reference.Table != null && reference.Table != table.Name))
+                    {
+                        continue;
+                    }
+                    found = i;
+                    count++;
+                }
+                if (count != 1)
+                {
+                    throw SqlErrors.Syntax();
+                }
+                return found;
+            }
+            return BindCondition(condition, Resolve);
+        }
 
         /// <summary>The columns the query returns, known from the statement before it is executed.</summary>
         public IReadOnlyList<SqlColumn> OutputColumns => this.outputColumns;

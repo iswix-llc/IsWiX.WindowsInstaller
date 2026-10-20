@@ -57,10 +57,10 @@ public class DatabaseTests
     }
 
     [Fact]
-    public void CommitIsNotSupportedYet()
+    public void CommitOnReadOnlyDatabaseFails()
     {
         using var db = new Database(TestFixtures.Path("basic.msi"));
 
-        Assert.Throws<NotImplementedException>(() => db.Commit());
+        Assert.ThrowsAny<InstallerException>(() => db.Commit());
     }
 }

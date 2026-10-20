@@ -144,10 +144,11 @@ public class ViewTests
     }
 
     [Fact]
-    public void InsertIsNotSupportedYet()
+    public void InsertOpensButCannotExecuteOnReadOnlyDatabase()
     {
         using var db = new Database(TestFixtures.Path("basic.msi"));
+        using View view = db.OpenView("INSERT INTO `Property` (`Property`, `Value`) VALUES ('a', 'b')");
 
-        Assert.Throws<NotImplementedException>(() => db.OpenView("INSERT INTO `Property` (`Property`, `Value`) VALUES ('a', 'b')"));
+        Assert.ThrowsAny<InstallerException>(() => view.Execute());
     }
 }
