@@ -832,7 +832,7 @@ namespace IsWiX.WindowsInstaller
         /// <summary>The columns the query returns, known from the statement before it is executed.</summary>
         public IReadOnlyList<SqlColumn> OutputColumns => this.outputColumns;
 
-        public static BoundSelect Bind(SqlSelect select, EngineDatabase database)
+        public static BoundSelect Bind(SqlSelect select, Database database)
         {
             var tables = new List<SqlTable>();
             foreach (string name in select.Tables)

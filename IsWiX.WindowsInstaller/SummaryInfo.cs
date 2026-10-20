@@ -1,5 +1,3 @@
-// Copyright (c) .NET Foundation and contributors. All rights reserved. Licensed under the Microsoft Reciprocal License. See LICENSE.TXT file in the project root for full license information.
-
 namespace IsWiX.WindowsInstaller
 {
     using System;
@@ -614,7 +612,7 @@ namespace IsWiX.WindowsInstaller
         private static int OpenSummaryInfo(string packagePath, bool enableWrite)
         {
             int maxProperties = !enableWrite ? 0 : SummaryInfo.MAX_PROPERTIES;
-            return MsiApi.MsiGetSummaryInformation(0, packagePath, (uint) maxProperties);
+            return MsiApi.MsiGetSummaryInformation(null, packagePath, (uint) maxProperties);
         }
     }
 }

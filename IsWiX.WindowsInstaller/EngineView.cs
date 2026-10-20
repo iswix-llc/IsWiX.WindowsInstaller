@@ -14,25 +14,25 @@ namespace IsWiX.WindowsInstaller
     /// </summary>
     internal sealed class EngineView
     {
-        private readonly EngineDatabase database;
+        private readonly Database database;
         private readonly BoundWrite? write;
         private readonly BoundDdl? ddl;
         private bool executed;
         private int position;
 
-        public EngineView(EngineDatabase database, BoundSelect query)
+        public EngineView(Database database, BoundSelect query)
         {
             this.database = database;
             this.Query = query;
         }
 
-        public EngineView(EngineDatabase database, BoundWrite write)
+        public EngineView(Database database, BoundWrite write)
         {
             this.database = database;
             this.write = write;
         }
 
-        public EngineView(EngineDatabase database, BoundDdl ddl)
+        public EngineView(Database database, BoundDdl ddl)
         {
             this.database = database;
             this.ddl = ddl;

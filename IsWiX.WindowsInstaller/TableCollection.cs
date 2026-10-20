@@ -1,5 +1,3 @@
-// Copyright (c) .NET Foundation and contributors. All rights reserved. Licensed under the Microsoft Reciprocal License. See LICENSE.TXT file in the project root for full license information.
-
 namespace IsWiX.WindowsInstaller
 {
     using System;
@@ -107,7 +105,7 @@ namespace IsWiX.WindowsInstaller
             {
                 throw new ArgumentNullException("item");
             }
-            uint ret = MsiApi.MsiDatabaseIsTablePersistent(this.db.Id, item);
+            uint ret = MsiApi.MsiDatabaseIsTablePersistent(this.db, item);
             if (ret == 3)  // MSICONDITION_ERROR
             {
                 throw new InstallerException();

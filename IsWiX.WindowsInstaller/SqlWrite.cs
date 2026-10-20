@@ -227,14 +227,14 @@ namespace IsWiX.WindowsInstaller
     /// <summary>An INSERT, UPDATE or DELETE statement, checked against the schema and ready to run.</summary>
     internal sealed class BoundWrite
     {
-        private readonly EngineDatabase database;
+        private readonly Database database;
         private readonly SqlStatement statement;
         private readonly MutableTable table;
         private readonly int[] insertColumns;
         private readonly List<(int Column, SqlOperand Value)> assignments;
         private readonly Func<object?[], object?[], bool>? where;
 
-        private BoundWrite(EngineDatabase database, SqlStatement statement, MutableTable table, int[] insertColumns,
+        private BoundWrite(Database database, SqlStatement statement, MutableTable table, int[] insertColumns,
             List<(int Column, SqlOperand Value)> assignments, Func<object?[], object?[], bool>? where)
         {
             this.database = database;
@@ -247,7 +247,7 @@ namespace IsWiX.WindowsInstaller
 
         public int MarkerCount => this.statement.MarkerCount;
 
-        public static BoundWrite Bind(SqlStatement statement, EngineDatabase database)
+        public static BoundWrite Bind(SqlStatement statement, Database database)
         {
             string tableName = statement switch
             {
@@ -379,10 +379,10 @@ namespace IsWiX.WindowsInstaller
     {
         private const int MaxNameLength = 31;
 
-        private readonly EngineDatabase database;
+        private readonly Database database;
         private readonly SqlStatement statement;
 
-        private BoundDdl(EngineDatabase database, SqlStatement statement)
+        private BoundDdl(Database database, SqlStatement statement)
         {
             this.database = database;
             this.statement = statement;
@@ -390,7 +390,7 @@ namespace IsWiX.WindowsInstaller
 
         public int MarkerCount => 0;
 
-        public static BoundDdl Bind(SqlStatement statement, EngineDatabase database)
+        public static BoundDdl Bind(SqlStatement statement, Database database)
         {
             switch (statement)
             {
@@ -460,7 +460,7 @@ namespace IsWiX.WindowsInstaller
     /// <summary>MsiViewModify on a single-table view: inserts, updates, deletes, assigns or replaces one row.</summary>
     internal static class ViewModify
     {
-        public static void Apply(EngineDatabase database, BoundSelect query, int mode, object?[] values)
+        public static void Apply(Database database, BoundSelect query, int mode, object?[] values)
         {
             if (!query.IsSingleTableWithoutFilter)
             {
@@ -549,7 +549,7 @@ namespace IsWiX.WindowsInstaller
 
         /// <summary>The table, and the record's values placed at their table positions, for a single-table view.</summary>
         private static (MutableTable Table, object?[] Supplied, HashSet<int> Named, int[] Positions) Prepare(
-            EngineDatabase database, BoundSelect query, object?[] values)
+            Database database, BoundSelect query, object?[] values)
         {
             if (!query.IsSingleTableWithoutFilter)
             {
@@ -571,7 +571,7 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>Refresh and Seek: the view's values for the row with the record's key.</summary>
-        public static object?[] Lookup(EngineDatabase database, BoundSelect query, object?[] values)
+        public static object?[] Lookup(Database database, BoundSelect query, object?[] values)
         {
             (MutableTable table, object?[] supplied, _, int[] positions) = Prepare(database, query, values);
             int existing = table.FindByKey(table.KeyOf(supplied));
@@ -586,7 +586,7 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>The Validate modes: checks the record against the table without changing it.</summary>
-        public static void Check(EngineDatabase database, BoundSelect query, int mode, object?[] values)
+        public static void Check(Database database, BoundSelect query, int mode, object?[] values)
         {
             (MutableTable table, object?[] supplied, HashSet<int> named, _) = Prepare(database, query, values);
             table.Validate(supplied, named);

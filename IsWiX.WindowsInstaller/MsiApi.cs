@@ -1,5 +1,3 @@
-// Copyright (c) .NET Foundation and contributors. All rights reserved. Licensed under the Microsoft Reciprocal License. See LICENSE.TXT file in the project root for full license information.
-
 namespace IsWiX.WindowsInstaller
 {
     using System;
@@ -123,43 +121,17 @@ namespace IsWiX.WindowsInstaller
             public uint dwStatus;
         }
 
-        internal static int MsiOpenDatabase(string szDatabasePath, IntPtr uiOpenMode)
+        internal static int MsiGetDatabaseState(Database database)
         {
-            long mode = uiOpenMode.ToInt64();
-            return Guard(() =>
-            {
-                // MSIDBOPEN_READONLY (0), MSIDBOPEN_TRANSACT (1) and MSIDBOPEN_DIRECT (2). Create modes are not supported yet.
-                if (mode < 0 || mode > 2)
-                {
-                    throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
-                }
-                return HandleTable.Add(EngineDatabase.Open(szDatabasePath, (DatabaseMode) mode));
-            }, String.Format(System.Globalization.CultureInfo.InvariantCulture, "Database=\"{0}\"", szDatabasePath));
+            database.ThrowIfClosed();
+            return 0; // MSIDBSTATE_READ
         }
 
-        internal static int MsiOpenDatabase(string szDatabasePath, string szPersist)
-        {
-            throw InstallerException.ExceptionFromReturnCode((uint) MsiError.CALL_NOT_IMPLEMENTED);
-        }
-
-        internal static int MsiGetDatabaseState(int hDatabase)
-        {
-            try
-            {
-                HandleTable.Get<EngineDatabase>(hDatabase);
-                return 0; // MSIDBSTATE_READ
-            }
-            catch (MsiErrorException)
-            {
-                return -1; // MSIDBSTATE_ERROR
-            }
-        }
-
-        internal static int MsiDatabaseOpenView(int hDatabase, string szQuery)
+        internal static int MsiDatabaseOpenView(Database database, string szQuery)
         {
             return Guard(() =>
             {
-                EngineDatabase database = HandleTable.Get<EngineDatabase>(hDatabase);
+                database.ThrowIfClosed();
                 if (szQuery == null)
                 {
                     throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
@@ -175,22 +147,28 @@ namespace IsWiX.WindowsInstaller
             });
         }
 
-        internal static MergeOutcome MsiDatabaseMerge(int hDatabase, int hDatabaseMerge, string szTableName)
+        internal static MergeOutcome MsiDatabaseMerge(Database database, Database databaseMerge, string szTableName)
         {
+            database.ThrowIfClosed();
+            databaseMerge.ThrowIfClosed();
             // Merging is not implemented yet.
             throw InstallerException.ExceptionFromReturnCode((uint) MsiError.CALL_NOT_IMPLEMENTED);
         }
 
-        internal static void MsiDatabaseCommit(int hDatabase)
+        internal static void MsiDatabaseCommit(Database database)
         {
-            Guard(() => HandleTable.Get<EngineDatabase>(hDatabase).Commit());
+            Guard(() =>
+            {
+                database.ThrowIfClosed();
+                database.WriteChanges();
+            });
         }
 
-        internal static int MsiDatabaseGetPrimaryKeys(int hDatabase, string szTableName)
+        internal static int MsiDatabaseGetPrimaryKeys(Database database, string szTableName)
         {
             return Guard(() =>
             {
-                EngineDatabase database = HandleTable.Get<EngineDatabase>(hDatabase);
+                database.ThrowIfClosed();
                 SqlTable table = database.FindTable(szTableName)
                     ?? throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
                 object?[] keys = Array.ConvertAll(
@@ -200,11 +178,11 @@ namespace IsWiX.WindowsInstaller
             });
         }
 
-        internal static uint MsiDatabaseIsTablePersistent(int hDatabase, string szTableName)
+        internal static uint MsiDatabaseIsTablePersistent(Database database, string szTableName)
         {
             try
             {
-                EngineDatabase database = HandleTable.Get<EngineDatabase>(hDatabase);
+                database.ThrowIfClosed();
                 return database.ContainsTable(szTableName) ? 1u : 2u; // MSICONDITION_TRUE or MSICONDITION_NONE
             }
             catch (MsiErrorException)
@@ -213,30 +191,42 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        internal static void MsiDatabaseExport(int hDatabase, string szTableName, string szFolderPath, string szFileName)
+        internal static void MsiDatabaseExport(Database database, string szTableName, string szFolderPath, string szFileName)
         {
-            Guard(() => HandleTable.Get<EngineDatabase>(hDatabase).Export(szTableName, Path.Combine(szFolderPath, szFileName)));
+            Guard(() =>
+            {
+                database.ThrowIfClosed();
+                database.ExportTable(szTableName, Path.Combine(szFolderPath, szFileName));
+            });
         }
 
-        internal static void MsiDatabaseImport(int hDatabase, string szFolderPath, string szFileName)
+        internal static void MsiDatabaseImport(Database database, string szFolderPath, string szFileName)
         {
-            Guard(() => HandleTable.Get<EngineDatabase>(hDatabase).Import(Path.Combine(szFolderPath, szFileName)));
+            Guard(() =>
+            {
+                database.ThrowIfClosed();
+                database.ImportTable(Path.Combine(szFolderPath, szFileName));
+            });
         }
 
-        internal static bool MsiDatabaseGenerateTransform(int hDatabase, int hDatabaseReference, string szTransformFile, int iReserved1, int iReserved2)
+        internal static bool MsiDatabaseGenerateTransform(Database database, Database databaseReference, string szTransformFile, int iReserved1, int iReserved2)
         {
             // Generating transforms is not implemented yet.
             throw InstallerException.ExceptionFromReturnCode((uint) MsiError.CALL_NOT_IMPLEMENTED);
         }
 
-        internal static void MsiCreateTransformSummaryInfo(int hDatabase, int hDatabaseReference, string szTransformFile, int iErrorConditions, int iValidation)
+        internal static void MsiCreateTransformSummaryInfo(Database database, Database databaseReference, string szTransformFile, int iErrorConditions, int iValidation)
         {
             throw InstallerException.ExceptionFromReturnCode((uint) MsiError.CALL_NOT_IMPLEMENTED);
         }
 
-        internal static void MsiDatabaseApplyTransform(int hDatabase, string szTransformFile, int iErrorConditions)
+        internal static void MsiDatabaseApplyTransform(Database database, string szTransformFile, int iErrorConditions)
         {
-            Guard(() => HandleTable.Get<EngineDatabase>(hDatabase).ApplyTransform(szTransformFile));
+            Guard(() =>
+            {
+                database.ThrowIfClosed();
+                database.ApplyTransformFile(szTransformFile);
+            });
         }
 
         internal static void MsiViewExecute(int hView, int hRecord)
@@ -484,11 +474,11 @@ namespace IsWiX.WindowsInstaller
         /// Opens summary information for a database handle or a package file, returning its handle. A
         /// non-zero update count asks for a handle that can be written.
         /// </summary>
-        internal static int MsiGetSummaryInformation(int hDatabase, string szDatabasePath, uint uiUpdateCount)
+        internal static int MsiGetSummaryInformation(Database database, string szDatabasePath, uint uiUpdateCount)
         {
             try
             {
-                return HandleTable.Add(OpenSummary(hDatabase, szDatabasePath, uiUpdateCount));
+                return HandleTable.Add(OpenSummary(database, szDatabasePath, uiUpdateCount));
             }
             catch (MsiErrorException e) when (szDatabasePath != null && (e.Code == (uint) MsiError.FILE_NOT_FOUND || e.Code == (uint) MsiError.ACCESS_DENIED))
             {
@@ -500,12 +490,12 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        private static EngineSummary OpenSummary(int hDatabase, string szDatabasePath, uint uiUpdateCount)
+        private static EngineSummary OpenSummary(Database database, string szDatabasePath, uint uiUpdateCount)
         {
             bool writable = uiUpdateCount > 0;
-            if (hDatabase != 0)
+            if (database != null)
             {
-                EngineDatabase database = HandleTable.Get<EngineDatabase>(hDatabase);
+                database.ThrowIfClosed();
                 if (writable)
                 {
                     database.RequireWritable();
@@ -523,7 +513,7 @@ namespace IsWiX.WindowsInstaller
                 return EngineSummary.OpenFile(szDatabasePath);
             }
 
-            EngineDatabase opened = EngineDatabase.Open(szDatabasePath, DatabaseMode.Transact);
+            Database opened = Database.OpenForSummary(szDatabasePath);
             return EngineSummary.Open(opened, ownsDatabase: true, writable);
         }
 

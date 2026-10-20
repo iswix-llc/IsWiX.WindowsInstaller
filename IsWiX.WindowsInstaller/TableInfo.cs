@@ -1,5 +1,3 @@
-// Copyright (c) .NET Foundation and contributors. All rights reserved. Licensed under the Microsoft Reciprocal License. See LICENSE.TXT file in the project root for full license information.
-
 namespace IsWiX.WindowsInstaller
 {
     using System;
@@ -240,7 +238,7 @@ namespace IsWiX.WindowsInstaller
             }
             else
             {
-                int hrec = MsiApi.MsiDatabaseGetPrimaryKeys(db.Id, table);
+                int hrec = MsiApi.MsiDatabaseGetPrimaryKeys(db, table);
 
                 using (Record rec = new Record(hrec, true, null))
                 {

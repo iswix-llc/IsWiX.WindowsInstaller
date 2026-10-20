@@ -1,5 +1,3 @@
-// Copyright (c) .NET Foundation and contributors. All rights reserved. Licensed under the Microsoft Reciprocal License. See LICENSE.TXT file in the project root for full license information.
-
 namespace IsWiX.WindowsInstaller
 {
     using System;
@@ -37,7 +35,7 @@ namespace IsWiX.WindowsInstaller
 
             string sql = (args == null || args.Length == 0 ? sqlFormat :
                 String.Format(CultureInfo.InvariantCulture, sqlFormat, args));
-            int viewHandle = MsiApi.MsiDatabaseOpenView(this.Id, sql);
+            int viewHandle = MsiApi.MsiDatabaseOpenView(this, sql);
 
             return new View(viewHandle, sql, this);
         }

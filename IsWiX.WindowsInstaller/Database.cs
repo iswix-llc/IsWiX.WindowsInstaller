@@ -1,5 +1,3 @@
-// Copyright (c) .NET Foundation and contributors. All rights reserved. Licensed under the Microsoft Reciprocal License. See LICENSE.TXT file in the project root for full license information.
-
 namespace IsWiX.WindowsInstaller
 {
     using System;
@@ -7,6 +5,7 @@ namespace IsWiX.WindowsInstaller
     using System.Collections.Generic;
     using System.Globalization;
     using System.Diagnostics.CodeAnalysis;
+    using MsiReader;
 
     /// <summary>
     /// Accesses a Windows Installer database.
@@ -36,33 +35,33 @@ namespace IsWiX.WindowsInstaller
     public partial class Database : IDisposable
     {
 
-        private readonly EngineHandle handleRef;
         private readonly object summaryLock = new object();
+        private bool closed;
 
         /// <summary>
-        /// Checks if the handle is closed. When closed, method calls on the handle object may throw an <see cref="InvalidHandleException"/>.
+        /// Checks if the database is closed. When closed, method calls on the database may throw an <see cref="InvalidHandleException"/>.
         /// </summary>
         public bool IsClosed
         {
             get
             {
-                return this.handleRef.IsClosed;
+                return this.closed;
             }
         }
 
         /// <summary>
-        /// Gets the engine handle id. Throws if the handle has been closed.
+        /// Throws <see cref="InvalidHandleException"/> if the database has been closed.
         /// </summary>
-        internal int Id
+        internal void ThrowIfClosed()
         {
-            get
+            if (this.closed)
             {
-                return this.handleRef.Id;
+                throw new InvalidHandleException();
             }
         }
 
         /// <summary>
-        /// Closes the handle. After closing a handle, further method calls may throw an <see cref="InvalidHandleException"/>.
+        /// Closes the database. After closing it, further method calls may throw an <see cref="InvalidHandleException"/>.
         /// </summary>
         public void Dispose()
         {
@@ -78,22 +77,6 @@ namespace IsWiX.WindowsInstaller
             this.Dispose();
         }
 
-        /// <summary>
-        /// Tests whether this object is equal to another of the same type with the same engine handle id.
-        /// </summary>
-        public override bool Equals(object obj)
-        {
-            return obj != null && this.GetType() == obj.GetType() &&
-                this.Id == ((Database) obj).Id;
-        }
-
-        /// <summary>
-        /// Gets a hash value derived from the engine handle id.
-        /// </summary>
-        public override int GetHashCode()
-        {
-            return this.Id.GetHashCode();
-        }
         private string filePath;
         private DatabaseOpenMode openMode;
         private SummaryInfo summaryInfo;
@@ -145,8 +128,17 @@ namespace IsWiX.WindowsInstaller
         /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msiopendatabase.asp">MsiOpenDatabase</a>
         /// </p></remarks>
         public Database(string filePath, string outputPath)
-            : this(Database.Open(filePath, outputPath), true, outputPath, DatabaseOpenMode.CreateDirect)
         {
+            if (String.IsNullOrEmpty(filePath))
+            {
+                throw new ArgumentNullException("filePath");
+            }
+            if (String.IsNullOrEmpty(outputPath))
+            {
+                throw new ArgumentNullException("outputPath");
+            }
+            // Output databases (the create modes) are not supported yet.
+            throw InstallerException.ExceptionFromReturnCode((uint) MsiError.CALL_NOT_IMPLEMENTED);
         }
 
         /// <summary>
@@ -175,24 +167,19 @@ namespace IsWiX.WindowsInstaller
         /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msiopendatabase.asp">MsiOpenDatabase</a>
         /// </p></remarks>
         public Database(string filePath, DatabaseOpenMode mode)
-            : this(Database.Open(filePath, mode), true, filePath, mode)
+            : this(Database.OpenReader(filePath, mode), filePath, mode)
         {
         }
 
         /// <summary>
-        /// Creates a new database from an MSI handle.
+        /// Creates a database object over an open engine database.
         /// </summary>
-        /// <param name="handle">Native MSI database handle.</param>
-        /// <param name="ownsHandle">True if the handle should be closed
-        /// when the database object is disposed</param>
-        /// <param name="filePath">Path of the database file, if known</param>
-        /// <param name="openMode">Mode the handle was originally opened in</param>
-        protected internal Database(
-            int handle, bool ownsHandle, string filePath, DatabaseOpenMode openMode)
+        private Database(MsiDatabase reader, string filePath, DatabaseOpenMode openMode)
         {
-            this.handleRef = new EngineHandle(handle, ownsHandle);
+            this.reader = reader;
             this.filePath = filePath;
             this.openMode = openMode;
+            this.Mode = (DatabaseMode) openMode;
         }
 
         /// <summary>
@@ -228,7 +215,7 @@ namespace IsWiX.WindowsInstaller
         {
             get
             {
-                int state = MsiApi.MsiGetDatabaseState(this.Id);
+                int state = MsiApi.MsiGetDatabaseState(this);
                 return state != 1;
             }
         }
@@ -324,7 +311,7 @@ namespace IsWiX.WindowsInstaller
                         if (this.summaryInfo == null || this.summaryInfo.IsClosed)
                         {
                             int maxProperties = this.IsReadOnly ? 0 : SummaryInfo.MAX_PROPERTIES;
-                            int summaryInfoHandle = MsiApi.MsiGetSummaryInformation(this.Id, null, (uint) maxProperties);
+                            int summaryInfoHandle = MsiApi.MsiGetSummaryInformation(this, null, (uint) maxProperties);
                             this.summaryInfo = new SummaryInfo(summaryInfoHandle, true);
                         }
                     }
@@ -403,7 +390,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("otherDatabase");
             }
 
-            switch (MsiApi.MsiDatabaseMerge(this.Id, otherDatabase.Id, errorTable))
+            switch (MsiApi.MsiDatabaseMerge(this, otherDatabase, errorTable))
             {
                 case MsiApi.MergeOutcome.Conflict:
                     throw new MergeException(this, errorTable);
@@ -465,7 +452,7 @@ namespace IsWiX.WindowsInstaller
             {
                 throw new ArgumentNullException("table");
             }
-            uint ret = MsiApi.MsiDatabaseIsTablePersistent(this.Id, table);
+            uint ret = MsiApi.MsiDatabaseIsTablePersistent(this, table);
             if (ret == 3)  // MSICONDITION_ERROR
             {
                 throw new InstallerException();
@@ -598,7 +585,7 @@ namespace IsWiX.WindowsInstaller
                 this.summaryInfo.Close();
                 this.summaryInfo = null;
             }
-            MsiApi.MsiDatabaseCommit(this.Id);
+            MsiApi.MsiDatabaseCommit(this);
         }
 
         /// <summary>
@@ -620,7 +607,7 @@ namespace IsWiX.WindowsInstaller
             }
 
             FileInfo file = new FileInfo(exportFilePath);
-            MsiApi.MsiDatabaseExport(this.Id, table, file.DirectoryName, file.Name);
+            MsiApi.MsiDatabaseExport(this, table, file.DirectoryName, file.Name);
         }
 
         /// <summary>
@@ -642,7 +629,7 @@ namespace IsWiX.WindowsInstaller
             }
 
             FileInfo file = new FileInfo(importFilePath);
-            MsiApi.MsiDatabaseImport(this.Id, file.DirectoryName, file.Name);
+            MsiApi.MsiDatabaseImport(this, file.DirectoryName, file.Name);
         }
 
         /// <summary>
@@ -799,14 +786,7 @@ namespace IsWiX.WindowsInstaller
         /// </summary>
         public override string ToString()
         {
-            if (this.FilePath != null)
-            {
-                return this.FilePath;
-            }
-            else
-            {
-                return "#" + (this.Id).ToString(CultureInfo.InvariantCulture);
-            }
+            return this.FilePath ?? base.ToString();
         }
 
         /// <summary>
@@ -828,11 +808,9 @@ namespace IsWiX.WindowsInstaller
 
             if (disposing)
             {
-                this.handleRef.Close();
-            }
+                this.closed = true;
+                this.ReleaseReader();
 
-            if (disposing)
-            {
                 if (this.summaryInfo != null)
                 {
                     this.summaryInfo.Close();
@@ -866,22 +844,11 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        private static int Open(string filePath, string outputPath)
-        {
-            if (String.IsNullOrEmpty(filePath))
-            {
-                throw new ArgumentNullException("filePath");
-            }
-
-            if (String.IsNullOrEmpty(outputPath))
-            {
-                throw new ArgumentNullException("outputPath");
-            }
-
-            return MsiApi.MsiOpenDatabase(filePath, outputPath);
-        }
-
-        private static int Open(string filePath, DatabaseOpenMode mode)
+        /// <summary>
+        /// Opens a database file for reading, and for writing in the transactional and direct modes.
+        /// Engine errors become <see cref="InstallerException"/>.
+        /// </summary>
+        private static MsiDatabase OpenReader(string filePath, DatabaseOpenMode mode)
         {
             if (String.IsNullOrEmpty(filePath))
             {
@@ -890,12 +857,26 @@ namespace IsWiX.WindowsInstaller
 
             if (Path.GetExtension(filePath).Equals(".msp", StringComparison.Ordinal))
             {
-                const int DATABASEOPENMODE_PATCH = 32;
-                int patchMode = (int) mode | DATABASEOPENMODE_PATCH;
-                mode = (DatabaseOpenMode) patchMode;
+                // Patch databases are not supported yet.
+                mode = (DatabaseOpenMode) ((int) mode | 32);
             }
+            try
+            {
+                return OpenFile(filePath, (DatabaseMode) mode);
+            }
+            catch (MsiErrorException e)
+            {
+                throw InstallerException.ExceptionFromReturnCode(e.Code,
+                    String.Format(CultureInfo.InvariantCulture, "Database=\"{0}\"", filePath));
+            }
+        }
 
-            return MsiApi.MsiOpenDatabase(filePath, (IntPtr) mode);
+        /// <summary>
+        /// Opens a database for the summary information of a file, in transaction mode.
+        /// </summary>
+        internal static Database OpenForSummary(string filePath)
+        {
+            return new Database(OpenFile(filePath, DatabaseMode.Transact), filePath, DatabaseOpenMode.Transact);
         }
 
         /// <summary>

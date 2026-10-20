@@ -9,13 +9,12 @@ namespace IsWiX.WindowsInstaller
     using MsiReader;
 
     /// <summary>
-    /// A database opened for reading, and for writing when it is not read-only. Tables are loaded into memory
-    /// the first time they are used; Commit writes the whole database back through <see cref="MsiWriter"/>.
+    /// The engine half of <see cref="Database"/>: tables are loaded into memory the first time they are used,
+    /// and <c>WriteChanges</c> writes the whole database back through <see cref="MsiWriter"/>.
     /// </summary>
-    internal sealed class EngineDatabase : IDisposable
+    public partial class Database
     {
-        private readonly string path;
-        private readonly Dictionary<string, MutableTable> tables = new Dictionary<string, MutableTable>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, MutableTable> loadedTables = new Dictionary<string, MutableTable>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, byte[]> pendingStreams = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         private MsiDatabase reader;
         private bool dirty;
@@ -26,25 +25,19 @@ namespace IsWiX.WindowsInstaller
         private readonly Dictionary<string, long> newKeyRanks = new Dictionary<string, long>(StringComparer.Ordinal);
         private const long NewStringBase = 1L << 32;
 
-        private EngineDatabase(MsiDatabase reader, string path, DatabaseMode mode)
-        {
-            this.reader = reader;
-            this.path = path;
-            this.Mode = mode;
-        }
+        internal DatabaseMode Mode { get; }
 
-        public DatabaseMode Mode { get; }
-
-        public static EngineDatabase Open(string path)
+        /// <summary>Opens the file for reading. Failures are reported as engine error codes.</summary>
+        private static MsiDatabase OpenFile(string path, DatabaseMode mode)
         {
-            return Open(path, DatabaseMode.ReadOnly);
-        }
-
-        public static EngineDatabase Open(string path, DatabaseMode mode)
-        {
+            // MSIDBOPEN_READONLY (0), MSIDBOPEN_TRANSACT (1) and MSIDBOPEN_DIRECT (2). Create modes are not supported yet.
+            if ((int) mode < 0 || (int) mode > 2)
+            {
+                throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
+            }
             try
             {
-                return new EngineDatabase(MsiDatabase.Open(path), path, mode);
+                return MsiDatabase.Open(path);
             }
             catch (FileNotFoundException)
             {
@@ -72,7 +65,7 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        public bool ContainsTable(string name)
+        internal bool ContainsTable(string name)
         {
             return (this.reader.ContainsTable(name) && !this.IsRemoved(name))
                 || this.addedTables.Any(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase))
@@ -80,7 +73,7 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>Finds a table by name, including the system tables _Tables, _Columns and _Streams.</summary>
-        public SqlTable? FindTable(string name)
+        internal SqlTable? FindTable(string name)
         {
             switch (name)
             {
@@ -96,13 +89,13 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>The in-memory copy of a table in the database, or null if the database has no such table.</summary>
-        public MutableTable? GetUserTable(string name)
+        internal MutableTable? GetUserTable(string name)
         {
             if (this.IsRemoved(name))
             {
                 return null;
             }
-            if (this.tables.TryGetValue(name, out MutableTable? loaded))
+            if (this.loadedTables.TryGetValue(name, out MutableTable? loaded))
             {
                 return loaded;
             }
@@ -111,25 +104,25 @@ namespace IsWiX.WindowsInstaller
                 return null;
             }
             MutableTable table = FromMsi(msiTable);
-            this.tables[table.Name] = table;
+            this.loadedTables[table.Name] = table;
             return table;
         }
 
         /// <summary>A plain stream's bytes, including any change not yet committed.</summary>
-        public byte[]? ReadPlainStream(string name)
+        internal byte[]? ReadPlainStream(string name)
         {
             return this.pendingStreams.TryGetValue(name, out byte[]? pending) ? pending : this.reader.ReadStream(name);
         }
 
         /// <summary>Replaces a plain stream. The change is written on Commit, or straight away in Direct mode.</summary>
-        public void PutPlainStream(string name, byte[] data)
+        internal void PutPlainStream(string name, byte[] data)
         {
             this.RequireWritable();
             this.pendingStreams[name] = data;
             this.Changed();
         }
 
-        public void RequireWritable()
+        internal void RequireWritable()
         {
             if (this.Mode == DatabaseMode.ReadOnly)
             {
@@ -138,12 +131,12 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>Records a change. A Direct database writes it to the file straight away.</summary>
-        public void Changed()
+        internal void Changed()
         {
             this.dirty = true;
             if (this.Mode == DatabaseMode.Direct)
             {
-                this.Commit();
+                this.WriteChanges();
             }
         }
 
@@ -151,7 +144,7 @@ namespace IsWiX.WindowsInstaller
         /// Writes the tables and streams to a temporary file beside the database, then moves it over the original.
         /// Binary cells are written as streams named Table.key, as the format requires.
         /// </summary>
-        public void Commit()
+        internal void WriteChanges()
         {
             this.RequireWritable();
             if (!this.dirty)
@@ -224,9 +217,9 @@ namespace IsWiX.WindowsInstaller
                 streams[pending.Key] = StreamSource.Of(pending.Value);
             }
 
-            int codePage = this.CodePage;
-            string directory = Path.GetDirectoryName(Path.GetFullPath(this.path)) ?? ".";
-            string temp = Path.Combine(directory, "." + Path.GetFileName(this.path) + "." + Guid.NewGuid().ToString("N") + ".tmp");
+            int codePage = this.ActiveCodePage;
+            string directory = Path.GetDirectoryName(Path.GetFullPath(this.filePath)) ?? ".";
+            string temp = Path.Combine(directory, "." + Path.GetFileName(this.filePath) + "." + Guid.NewGuid().ToString("N") + ".tmp");
             bool moved = false;
             try
             {
@@ -235,7 +228,7 @@ namespace IsWiX.WindowsInstaller
                     MsiWriter.WriteSources(output, codePage, writeTables, streams);
                 }
                 this.reader.Dispose();
-                File.Move(temp, this.path, overwrite: true);
+                File.Move(temp, this.filePath, overwrite: true);
                 moved = true;
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is ArgumentException)
@@ -251,15 +244,15 @@ namespace IsWiX.WindowsInstaller
                 if (!moved)
                 {
                     // The original file is untouched, so reopen it for further reads.
-                    this.reader = MsiDatabase.Open(this.path);
+                    this.reader = MsiDatabase.Open(this.filePath);
                 }
             }
 
-            this.reader = MsiDatabase.Open(this.path);
+            this.reader = MsiDatabase.Open(this.filePath);
             this.pendingStreams.Clear();
             // The file now holds every change, and the cached rows match it. Their binary cells must read the
             // stream names the new file uses, which differ from the old names when a primary key changed.
-            foreach (MutableTable table in this.tables.Values)
+            foreach (MutableTable table in this.loadedTables.Values)
             {
                 RebindBinary(table);
             }
@@ -312,14 +305,10 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>
-        /// Writes a table to a file in Windows Installer text (IDT) format. The _ForceCodepage table holds
-        /// only the database code page, and Database.CodePage reads it from the third line.
-        /// </summary>
-        /// <summary>
         /// Applies a transform to the database. The transform is checked in full before any change is made,
         /// so a transform in an unsupported layout leaves the database as it was.
         /// </summary>
-        public void ApplyTransform(string transformPath)
+        internal void ApplyTransformFile(string transformPath)
         {
             this.RequireWritable();
             MsiTransform transform;
@@ -498,7 +487,7 @@ namespace IsWiX.WindowsInstaller
             {
                 throw MutableTable.Failed();
             }
-            this.tables[table.Name] = table;
+            this.loadedTables[table.Name] = table;
             this.addedTables.Add(table.Name);
         }
 
@@ -575,7 +564,7 @@ namespace IsWiX.WindowsInstaller
             this.alteredTables.RemoveAll(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase));
             if (this.addedTables.RemoveAll(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase)) > 0)
             {
-                this.tables.Remove(name);
+                this.loadedTables.Remove(name);
                 return;
             }
             this.RemoveTable(name);
@@ -605,7 +594,7 @@ namespace IsWiX.WindowsInstaller
         /// <summary>Removes a table defined in the file. Runs only after the whole transform has been checked.</summary>
         private void RemoveTable(string name)
         {
-            this.tables.Remove(name);
+            this.loadedTables.Remove(name);
             this.removedTables.Add(name);
         }
 
@@ -780,12 +769,16 @@ namespace IsWiX.WindowsInstaller
             return transform.GetString((uint) ReadWord(data, position));
         }
 
-        public void Export(string table, string path)
+        /// <summary>
+        /// Writes a table to a file in Windows Installer text (IDT) format. The _ForceCodepage table holds
+        /// only the database code page, and Database.CodePage reads it from the third line.
+        /// </summary>
+        internal void ExportTable(string table, string path)
         {
             string text;
             if (table == "_ForceCodepage")
             {
-                text = "CodePage\r\ni2\r\n" + this.CodePage.ToString(CultureInfo.InvariantCulture) + "\r\n";
+                text = "CodePage\r\ni2\r\n" + this.ActiveCodePage.ToString(CultureInfo.InvariantCulture) + "\r\n";
             }
             else
             {
@@ -800,7 +793,7 @@ namespace IsWiX.WindowsInstaller
         /// Reads a table from an IDT file and replaces the table of that name, or adds it. A binary cell names a file
         /// in the same folder, and its bytes become the value. Rows are checked as they are inserted.
         /// </summary>
-        public void Import(string path)
+        internal void ImportTable(string path)
         {
             this.RequireWritable();
             string folder = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".";
@@ -882,10 +875,10 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>The database code page. A value set here replaces the file's when the database is committed.</summary>
-        public int CodePage => this.codePageOverride ?? this.reader.CodePage;
+        internal int ActiveCodePage => this.codePageOverride ?? this.reader.CodePage;
 
         /// <summary>Sets the database code page. Strings are written in it on Commit.</summary>
-        public void SetCodePage(int codePage)
+        internal void SetCodePage(int codePage)
         {
             this.RequireWritable();
             if (codePage < 0 || codePage > 0xFFFF)
@@ -991,7 +984,7 @@ namespace IsWiX.WindowsInstaller
             {
                 this.addedTables.Add(table.Name);
             }
-            this.tables[table.Name] = table;
+            this.loadedTables[table.Name] = table;
         }
 
         private static string FormatIdt(SqlTable table, string folder)
@@ -1054,7 +1047,7 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        public void Dispose()
+        internal void ReleaseReader()
         {
             this.reader.Dispose();
         }

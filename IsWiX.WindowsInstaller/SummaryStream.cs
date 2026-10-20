@@ -265,12 +265,12 @@ namespace IsWiX.WindowsInstaller
     /// <summary>An open summary information handle. Changes are written by Persist, which updates the database.</summary>
     internal sealed class EngineSummary : IDisposable
     {
-        private readonly EngineDatabase? database;
+        private readonly Database? database;
         private readonly bool ownsDatabase;
         private readonly bool writable;
         private readonly SortedDictionary<uint, SummaryValue> properties;
 
-        private EngineSummary(EngineDatabase database, bool ownsDatabase, bool writable)
+        private EngineSummary(Database database, bool ownsDatabase, bool writable)
         {
             this.database = database;
             this.ownsDatabase = ownsDatabase;
@@ -301,7 +301,7 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>Opens the summary of a database. An owned database is closed with the handle.</summary>
-        public static EngineSummary Open(EngineDatabase database, bool ownsDatabase, bool writable)
+        public static EngineSummary Open(Database database, bool ownsDatabase, bool writable)
         {
             try
             {

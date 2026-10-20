@@ -1,5 +1,3 @@
-// Copyright (c) .NET Foundation and contributors. All rights reserved. Licensed under the Microsoft Reciprocal License. See LICENSE.TXT file in the project root for full license information.
-
 namespace IsWiX.WindowsInstaller
 {
     using System;
@@ -44,7 +42,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("transformFile");
             }
 
-            return MsiApi.MsiDatabaseGenerateTransform(this.Id, referenceDatabase.Id, transformFile, 0, 0);
+            return MsiApi.MsiDatabaseGenerateTransform(this, referenceDatabase, transformFile, 0, 0);
         }
 
         /// <summary>
@@ -81,7 +79,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("transformFile");
             }
 
-            MsiApi.MsiCreateTransformSummaryInfo(this.Id, referenceDatabase.Id, transformFile, (int) errors, (int) validations);
+            MsiApi.MsiCreateTransformSummaryInfo(this, referenceDatabase, transformFile, (int) errors, (int) validations);
         }
 
         /// <summary>
@@ -152,7 +150,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("transformFile");
             }
 
-            MsiApi.MsiDatabaseApplyTransform(this.Id, transformFile, (int) errorConditionsToSuppress);
+            MsiApi.MsiDatabaseApplyTransform(this, transformFile, (int) errorConditionsToSuppress);
         }
 
         /// <summary>
