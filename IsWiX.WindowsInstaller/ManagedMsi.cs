@@ -92,6 +92,7 @@ namespace IsWiX.WindowsInstaller
         private MsiDatabase reader;
         private bool dirty;
         private readonly List<string> addedTables = new List<string>();
+        private readonly List<string> removedTables = new List<string>();
 
         private ManagedDatabase(MsiDatabase reader, string path, DatabaseMode mode)
         {
@@ -141,7 +142,7 @@ namespace IsWiX.WindowsInstaller
 
         public bool ContainsTable(string name)
         {
-            return this.reader.ContainsTable(name)
+            return (this.reader.ContainsTable(name) && !this.IsRemoved(name))
                 || this.addedTables.Any(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase))
                 || IsSystemTable(name);
         }
@@ -165,6 +166,10 @@ namespace IsWiX.WindowsInstaller
         /// <summary>The in-memory copy of a table in the database, or null if the database has no such table.</summary>
         public MutableTable? GetUserTable(string name)
         {
+            if (this.IsRemoved(name))
+            {
+                return null;
+            }
             if (this.tables.TryGetValue(name, out MutableTable? loaded))
             {
                 return loaded;
@@ -367,6 +372,7 @@ namespace IsWiX.WindowsInstaller
             using (transform)
             {
                 Dictionary<string, MutableTable> newTables = PlanNewTables(transform);
+                List<string> deletedTables = PlanDeletedTables(transform);
                 var changes = new List<Action>();
                 foreach (MutableTable newTable in newTables.Values)
                 {
@@ -380,10 +386,20 @@ namespace IsWiX.WindowsInstaller
                     {
                         continue;
                     }
+                    if (deletedTables.Contains(stream.Key, StringComparer.OrdinalIgnoreCase))
+                    {
+                        throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                    }
                     MutableTable table = this.GetUserTable(stream.Key)
                         ?? (newTables.TryGetValue(stream.Key, out MutableTable? defined) ? defined : null)
                         ?? throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
                     changes.AddRange(PlanRows(table, stream.Value, transform));
+                }
+
+                foreach (string name in deletedTables)
+                {
+                    string deleted = name;
+                    changes.Add(() => this.RemoveTable(deleted));
                 }
 
                 foreach (Action change in changes)
@@ -392,6 +408,39 @@ namespace IsWiX.WindowsInstaller
                 }
                 this.Changed();
             }
+        }
+
+        /// <summary>
+        /// Reads the tables a transform deletes: rows of its _Tables stream with header 0 and the table name as key.
+        /// The table must be in the database, and each table can be deleted once.
+        /// </summary>
+        private List<string> PlanDeletedTables(MsiTransform transform)
+        {
+            var deleted = new List<string>();
+            byte[]? tablesStream = StreamNamed(transform, "_Tables");
+            if (tablesStream == null)
+            {
+                return deleted;
+            }
+            for (int position = 0; position < tablesStream.Length; position += 4)
+            {
+                if (ReadWord(tablesStream, position) != 0)
+                {
+                    continue;
+                }
+                string name = transform.GetString((uint) ReadWord(tablesStream, position + 2))
+                    ?? throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                if (!this.reader.ContainsTable(name) || this.IsRemoved(name))
+                {
+                    throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                }
+                if (deleted.Contains(name, StringComparer.OrdinalIgnoreCase))
+                {
+                    throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                }
+                deleted.Add(name);
+            }
+            return deleted;
         }
 
         /// <summary>
@@ -409,15 +458,22 @@ namespace IsWiX.WindowsInstaller
             {
                 return result;
             }
-            if (tablesStream == null || columnsStream == null || tablesStream.Length % 4 != 0 || columnsStream.Length % 10 != 0)
+            if (tablesStream == null || (columnsStream != null && columnsStream.Length % 10 != 0) || tablesStream.Length % 4 != 0)
             {
                 throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
             }
+            byte[] columnsData = columnsStream ?? new byte[0];
 
             var names = new List<string>();
             for (int position = 0; position < tablesStream.Length; position += 4)
             {
-                if (ReadWord(tablesStream, position) != 0x0101)
+                int header = ReadWord(tablesStream, position);
+                if (header == 0)
+                {
+                    // A deleted table. PlanDeletedTables reads it.
+                    continue;
+                }
+                if (header != 0x0101)
                 {
                     throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
                 }
@@ -431,15 +487,15 @@ namespace IsWiX.WindowsInstaller
             }
 
             var columns = names.ToDictionary(n => n, _ => new List<SqlColumn>(), StringComparer.OrdinalIgnoreCase);
-            for (int position = 0; position < columnsStream.Length; position += 10)
+            for (int position = 0; position < columnsData.Length; position += 10)
             {
-                if (ReadWord(columnsStream, position) != 0x0401)
+                if (ReadWord(columnsData, position) != 0x0401)
                 {
                     throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
                 }
-                string tableName = transform.GetString((uint) ReadWord(columnsStream, position + 2))
+                string tableName = transform.GetString((uint) ReadWord(columnsData, position + 2))
                     ?? throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
-                string columnName = transform.GetString((uint) ReadWord(columnsStream, position + 6))
+                string columnName = transform.GetString((uint) ReadWord(columnsData, position + 6))
                     ?? throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
                 if (!columns.TryGetValue(tableName, out List<SqlColumn>? list))
                 {
@@ -447,7 +503,7 @@ namespace IsWiX.WindowsInstaller
                 }
 
                 // Bit 0x8000 marks a column the transform adds. Only string columns are supported.
-                int type = ReadWord(columnsStream, position + 8) & 0x7FFF;
+                int type = ReadWord(columnsData, position + 8) & 0x7FFF;
                 if ((type & 0x0800) == 0)
                 {
                     throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
@@ -479,10 +535,22 @@ namespace IsWiX.WindowsInstaller
             this.addedTables.Add(table.Name);
         }
 
+        /// <summary>Removes a table defined in the file. Runs only after the whole transform has been checked.</summary>
+        private void RemoveTable(string name)
+        {
+            this.tables.Remove(name);
+            this.removedTables.Add(name);
+        }
+
+        private bool IsRemoved(string name)
+        {
+            return this.removedTables.Any(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase));
+        }
+
         /// <summary>The tables in the database: those read from the file, then those a transform added.</summary>
         private IEnumerable<string> AllTableNames()
         {
-            return this.reader.TableNames.Concat(this.addedTables);
+            return this.reader.TableNames.Where(n => !this.IsRemoved(n)).Concat(this.addedTables);
         }
 
         /// <summary>The column type word as the _Columns table stores it.</summary>

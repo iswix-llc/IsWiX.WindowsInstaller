@@ -180,6 +180,21 @@ public class TransformTests : IDisposable
     }
 
     [Fact]
+    public void TableDeleteTransformRemovesValidationTableLikeWindows()
+    {
+        string path = CopyOfBase();
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            db.ApplyTransform(TestFixtures.Path("test-dropvalidation.mst"));
+            db.Commit();
+        }
+
+        using var check = new Database(path);
+        var names = check.Tables.Select(t => t.Name).Where(n => !n.StartsWith('_')).OrderBy(n => n, StringComparer.Ordinal).ToList();
+        Assert.Equal(WindowsTableNames.OrderBy(n => n, StringComparer.Ordinal), names);
+    }
+
+    [Fact]
     public void TransformOnReadOnlyDatabaseFails()
     {
         using var db = new Database(CopyOfBase());
@@ -298,5 +313,36 @@ public class TransformTests : IDisposable
     private static readonly string[] FeatureRows =
     {
         "test\tInstalls all the files needed for testtest\t2",
+    };
+
+    // Windows Installer's user tables after test-dropvalidation.mst. The _Validation table is gone.
+    private static readonly string[] WindowsTableNames =
+    {
+        "Property",
+        "Upgrade",
+        "LaunchCondition",
+        "Icon",
+        "Directory",
+        "Feature",
+        "TextStyle",
+        "ControlEvent",
+        "Control",
+        "CheckBox",
+        "ListBox",
+        "ActionText",
+        "EventMapping",
+        "Dialog",
+        "RadioButton",
+        "ControlCondition",
+        "Binary",
+        "UIText",
+        "Error",
+        "AdminUISequence",
+        "AdminExecuteSequence",
+        "AdvtExecuteSequence",
+        "InstallUISequence",
+        "InstallExecuteSequence",
+        "File",
+        "Media",
     };
 }

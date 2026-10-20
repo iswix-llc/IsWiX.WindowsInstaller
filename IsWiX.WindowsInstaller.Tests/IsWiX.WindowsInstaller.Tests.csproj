@@ -31,6 +31,7 @@
     <None Include="..\MsiReader.Tests\fixtures\test-null.mst" Link="fixtures\test-null.mst" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\MsiReader.Tests\fixtures\test-addremove.mst" Link="fixtures\test-addremove.mst" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\MsiReader.Tests\fixtures\test-twocolumns.mst" Link="fixtures\test-twocolumns.mst" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\MsiReader.Tests\fixtures\test-dropvalidation.mst" Link="fixtures\test-dropvalidation.mst" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
