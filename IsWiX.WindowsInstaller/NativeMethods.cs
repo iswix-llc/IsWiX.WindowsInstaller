@@ -85,6 +85,7 @@ namespace IsWiX.WindowsInstaller
             INSTALL_SOURCE_ABSENT = 1612,
             BAD_QUERY_SYNTAX = 1615,
             INSTALL_PACKAGE_INVALID = 1620,
+            INSTALL_TRANSFORM_FAILURE = 1624,
             FUNCTION_FAILED = 1627,
             INVALID_TABLE = 1628,
             DATATYPE_MISMATCH = 1629,
@@ -283,7 +284,7 @@ namespace IsWiX.WindowsInstaller
 
         internal static uint MsiDatabaseApplyTransform(int hDatabase, string szTransformFile, int iErrorConditions)
         {
-            return (uint) Error.CALL_NOT_IMPLEMENTED;
+            return Guard(() => ManagedHandles.Get<ManagedDatabase>(hDatabase).ApplyTransform(szTransformFile));
         }
 
         internal static uint MsiViewExecute(int hView, int hRecord)
@@ -547,9 +548,16 @@ namespace IsWiX.WindowsInstaller
                     {
                         throw new MsiErrorException((uint) Error.INVALID_PARAMETER);
                     }
-                    ManagedDatabase database = ManagedDatabase.Open(szDatabasePath,
-                        writable ? DatabaseMode.Transact : DatabaseMode.ReadOnly);
-                    summary = ManagedSummary.Open(database, ownsDatabase: true, writable);
+                    if (!writable)
+                    {
+                        // Read-only summaries come straight from the file, so transforms can be read too.
+                        summary = ManagedSummary.OpenFile(szDatabasePath);
+                    }
+                    else
+                    {
+                        ManagedDatabase database = ManagedDatabase.Open(szDatabasePath, DatabaseMode.Transact);
+                        summary = ManagedSummary.Open(database, ownsDatabase: true, writable);
+                    }
                 }
                 handle = ManagedHandles.Add(summary);
             });

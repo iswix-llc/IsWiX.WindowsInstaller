@@ -265,7 +265,7 @@ namespace IsWiX.WindowsInstaller
     /// <summary>An open summary information handle. Changes are written by Persist, which updates the database.</summary>
     internal sealed class ManagedSummary : IDisposable
     {
-        private readonly ManagedDatabase database;
+        private readonly ManagedDatabase? database;
         private readonly bool ownsDatabase;
         private readonly bool writable;
         private readonly SortedDictionary<uint, SummaryValue> properties;
@@ -277,6 +277,27 @@ namespace IsWiX.WindowsInstaller
             this.writable = writable;
             byte[]? data = database.ReadPlainStream(SummaryStream.Name);
             this.properties = data == null ? new SortedDictionary<uint, SummaryValue>() : SummaryStream.Read(data);
+        }
+
+        private ManagedSummary(byte[]? data)
+        {
+            this.database = null;
+            this.ownsDatabase = false;
+            this.writable = false;
+            this.properties = data == null ? new SortedDictionary<uint, SummaryValue>() : SummaryStream.Read(data);
+        }
+
+        /// <summary>Opens the read-only summary of an MSI or transform file, without opening its tables.</summary>
+        public static ManagedSummary OpenFile(string path)
+        {
+            try
+            {
+                return new ManagedSummary(MsiStreams.ReadPlain(path, SummaryStream.Name));
+            }
+            catch (MsiFormatException)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_PACKAGE_INVALID);
+            }
         }
 
         /// <summary>Opens the summary of a database. An owned database is closed with the handle.</summary>
@@ -369,10 +390,10 @@ namespace IsWiX.WindowsInstaller
             {
                 this.properties[SummaryStream.CodePageProperty] = new SummaryValue(SummaryStream.VtI2, number: 1252);
             }
-            this.database.PutPlainStream(SummaryStream.Name, SummaryStream.Write(this.properties));
+            this.database!.PutPlainStream(SummaryStream.Name, SummaryStream.Write(this.properties));
             if (this.ownsDatabase)
             {
-                this.database.Commit();
+                this.database!.Commit();
             }
         }
 
@@ -380,7 +401,7 @@ namespace IsWiX.WindowsInstaller
         {
             if (this.ownsDatabase)
             {
-                this.database.Dispose();
+                this.database!.Dispose();
             }
         }
 

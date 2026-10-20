@@ -340,6 +340,92 @@ namespace IsWiX.WindowsInstaller
         /// Writes a table to a file in Windows Installer text (IDT) format. The _ForceCodepage table holds
         /// only the database code page, and Database.CodePage reads it from the third line.
         /// </summary>
+        /// <summary>
+        /// Applies a transform to the database. Each table stream is read and checked before any change is made,
+        /// so a transform in an unsupported layout leaves the database as it was.
+        /// </summary>
+        public void ApplyTransform(string transformPath)
+        {
+            this.RequireWritable();
+            MsiTransform transform;
+            try
+            {
+                transform = MsiTransform.Open(transformPath);
+            }
+            catch (FileNotFoundException)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.FILE_NOT_FOUND);
+            }
+            catch (MsiFormatException)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+            }
+
+            using (transform)
+            {
+                var changes = new List<Action>();
+                foreach (KeyValuePair<string, byte[]> stream in transform.Tables)
+                {
+                    MutableTable table = this.GetUserTable(stream.Key)
+                        ?? throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                    changes.Add(PlanRowChange(table, stream.Value, transform));
+                }
+
+                foreach (Action change in changes)
+                {
+                    change();
+                }
+                this.Changed();
+            }
+        }
+
+        /// <summary>
+        /// Plans the change for one transform table stream. The only layout supported is the one verified
+        /// against Windows Installer output: one row of three 2-byte words, the header, the key string id
+        /// and the value string id. A header with bit 0x0200 inserts the row. A header of 2 modifies the
+        /// Value column of the row with that key. Other layouts are rejected.
+        /// </summary>
+        private static Action PlanRowChange(MutableTable table, byte[] data, MsiTransform transform)
+        {
+            bool twoStringColumns = table.Columns.Count == 2
+                && table.Columns[0].Type == MsiColumnType.String
+                && table.Columns[1].Type == MsiColumnType.String;
+            if (!twoStringColumns || data.Length != 6)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+            }
+
+            int header = data[0] | (data[1] << 8);
+            string? key = transform.GetString((uint) (data[2] | (data[3] << 8)));
+            string? value = transform.GetString((uint) (data[4] | (data[5] << 8)));
+            if (key == null)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+            }
+
+            if ((header & 0x0200) != 0)
+            {
+                return () => table.Insert(new object?[] { key, value });
+            }
+
+            if (header != 2)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+            }
+
+            return () =>
+            {
+                int index = table.FindByKey(new object?[] { key });
+                if (index < 0)
+                {
+                    throw MutableTable.Failed();
+                }
+                object?[] row = (object?[]) table.Rows[index].Clone();
+                row[1] = value;
+                table.Update(new[] { (index, row) });
+            };
+        }
+
         public void Export(string table, string path)
         {
             string text;
