@@ -263,14 +263,14 @@ namespace IsWiX.WindowsInstaller
     }
 
     /// <summary>An open summary information handle. Changes are written by Persist, which updates the database.</summary>
-    internal sealed class ManagedSummary : IDisposable
+    internal sealed class EngineSummary : IDisposable
     {
-        private readonly ManagedDatabase? database;
+        private readonly EngineDatabase? database;
         private readonly bool ownsDatabase;
         private readonly bool writable;
         private readonly SortedDictionary<uint, SummaryValue> properties;
 
-        private ManagedSummary(ManagedDatabase database, bool ownsDatabase, bool writable)
+        private EngineSummary(EngineDatabase database, bool ownsDatabase, bool writable)
         {
             this.database = database;
             this.ownsDatabase = ownsDatabase;
@@ -279,7 +279,7 @@ namespace IsWiX.WindowsInstaller
             this.properties = data == null ? new SortedDictionary<uint, SummaryValue>() : SummaryStream.Read(data);
         }
 
-        private ManagedSummary(byte[]? data)
+        private EngineSummary(byte[]? data)
         {
             this.database = null;
             this.ownsDatabase = false;
@@ -288,24 +288,24 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>Opens the read-only summary of an MSI or transform file, without opening its tables.</summary>
-        public static ManagedSummary OpenFile(string path)
+        public static EngineSummary OpenFile(string path)
         {
             try
             {
-                return new ManagedSummary(MsiStreams.ReadPlain(path, SummaryStream.Name));
+                return new EngineSummary(MsiStreams.ReadPlain(path, SummaryStream.Name));
             }
             catch (MsiFormatException)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_PACKAGE_INVALID);
+                throw new MsiErrorException((uint) MsiError.INSTALL_PACKAGE_INVALID);
             }
         }
 
         /// <summary>Opens the summary of a database. An owned database is closed with the handle.</summary>
-        public static ManagedSummary Open(ManagedDatabase database, bool ownsDatabase, bool writable)
+        public static EngineSummary Open(EngineDatabase database, bool ownsDatabase, bool writable)
         {
             try
             {
-                return new ManagedSummary(database, ownsDatabase, writable);
+                return new EngineSummary(database, ownsDatabase, writable);
             }
             catch (MsiFormatException)
             {
@@ -313,7 +313,7 @@ namespace IsWiX.WindowsInstaller
                 {
                     database.Dispose();
                 }
-                throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_PACKAGE_INVALID);
+                throw new MsiErrorException((uint) MsiError.INSTALL_PACKAGE_INVALID);
             }
         }
 
@@ -339,13 +339,13 @@ namespace IsWiX.WindowsInstaller
             RequireProperty(id);
             if (!this.writable)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.FUNCTION_FAILED);
+                throw new MsiErrorException((uint) MsiError.FUNCTION_FAILED);
             }
             if (type == SummaryStream.VtEmpty)
             {
                 if (id == SummaryStream.CodePageProperty)
                 {
-                    throw new MsiErrorException((uint) NativeMethods.Error.DATATYPE_MISMATCH);
+                    throw new MsiErrorException((uint) MsiError.DATATYPE_MISMATCH);
                 }
                 this.properties.Remove(id);
                 return;
@@ -353,14 +353,14 @@ namespace IsWiX.WindowsInstaller
 
             if (id == SummaryStream.CodePageProperty && type != SummaryStream.VtI2)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.DATATYPE_MISMATCH);
+                throw new MsiErrorException((uint) MsiError.DATATYPE_MISMATCH);
             }
             switch (type)
             {
                 case SummaryStream.VtI2:
                     if (number < short.MinValue || number > short.MaxValue)
                     {
-                        throw new MsiErrorException((uint) NativeMethods.Error.DATATYPE_MISMATCH);
+                        throw new MsiErrorException((uint) MsiError.DATATYPE_MISMATCH);
                     }
                     this.properties[id] = new SummaryValue(type, number: number);
                     break;
@@ -374,7 +374,7 @@ namespace IsWiX.WindowsInstaller
                     this.properties[id] = new SummaryValue(type, text: text ?? string.Empty);
                     break;
                 default:
-                    throw new MsiErrorException((uint) NativeMethods.Error.DATATYPE_MISMATCH);
+                    throw new MsiErrorException((uint) MsiError.DATATYPE_MISMATCH);
             }
         }
 
@@ -383,7 +383,7 @@ namespace IsWiX.WindowsInstaller
         {
             if (!this.writable)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.FUNCTION_FAILED);
+                throw new MsiErrorException((uint) MsiError.FUNCTION_FAILED);
             }
             // Strings are written as Windows-1252 unless the stream names another code page, so say so explicitly.
             if (!this.properties.ContainsKey(SummaryStream.CodePageProperty))
@@ -409,7 +409,7 @@ namespace IsWiX.WindowsInstaller
         {
             if (id < 1 || id > SummaryStream.MaxProperty)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.DATATYPE_MISMATCH);
+                throw new MsiErrorException((uint) MsiError.DATATYPE_MISMATCH);
             }
         }
     }

@@ -219,22 +219,22 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        public static MsiErrorException Failed() => new MsiErrorException((uint) NativeMethods.Error.FUNCTION_FAILED);
+        public static MsiErrorException Failed() => new MsiErrorException((uint) MsiError.FUNCTION_FAILED);
 
-        public static MsiErrorException Mismatch() => new MsiErrorException((uint) NativeMethods.Error.DATATYPE_MISMATCH);
+        public static MsiErrorException Mismatch() => new MsiErrorException((uint) MsiError.DATATYPE_MISMATCH);
     }
 
     /// <summary>An INSERT, UPDATE or DELETE statement, checked against the schema and ready to run.</summary>
     internal sealed class BoundWrite
     {
-        private readonly ManagedDatabase database;
+        private readonly EngineDatabase database;
         private readonly SqlStatement statement;
         private readonly MutableTable table;
         private readonly int[] insertColumns;
         private readonly List<(int Column, SqlOperand Value)> assignments;
         private readonly Func<object?[], object?[], bool>? where;
 
-        private BoundWrite(ManagedDatabase database, SqlStatement statement, MutableTable table, int[] insertColumns,
+        private BoundWrite(EngineDatabase database, SqlStatement statement, MutableTable table, int[] insertColumns,
             List<(int Column, SqlOperand Value)> assignments, Func<object?[], object?[], bool>? where)
         {
             this.database = database;
@@ -247,7 +247,7 @@ namespace IsWiX.WindowsInstaller
 
         public int MarkerCount => this.statement.MarkerCount;
 
-        public static BoundWrite Bind(SqlStatement statement, ManagedDatabase database)
+        public static BoundWrite Bind(SqlStatement statement, EngineDatabase database)
         {
             string tableName = statement switch
             {
@@ -303,7 +303,7 @@ namespace IsWiX.WindowsInstaller
         {
             if (markers.Length < this.MarkerCount)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_PARAMETER);
+                throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
             }
             this.database.RequireWritable();
             object?[] parameters = markers.Take(this.MarkerCount).ToArray();
@@ -362,7 +362,7 @@ namespace IsWiX.WindowsInstaller
                 case SqlMarkerOperand marker:
                     if (marker.Index >= markers.Length)
                     {
-                        throw new MsiErrorException((uint) NativeMethods.Error.INVALID_PARAMETER);
+                        throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
                     }
                     return markers[marker.Index];
                 default:
@@ -379,10 +379,10 @@ namespace IsWiX.WindowsInstaller
     {
         private const int MaxNameLength = 31;
 
-        private readonly ManagedDatabase database;
+        private readonly EngineDatabase database;
         private readonly SqlStatement statement;
 
-        private BoundDdl(ManagedDatabase database, SqlStatement statement)
+        private BoundDdl(EngineDatabase database, SqlStatement statement)
         {
             this.database = database;
             this.statement = statement;
@@ -390,7 +390,7 @@ namespace IsWiX.WindowsInstaller
 
         public int MarkerCount => 0;
 
-        public static BoundDdl Bind(SqlStatement statement, ManagedDatabase database)
+        public static BoundDdl Bind(SqlStatement statement, EngineDatabase database)
         {
             switch (statement)
             {
@@ -460,11 +460,11 @@ namespace IsWiX.WindowsInstaller
     /// <summary>MsiViewModify on a single-table view: inserts, updates, deletes, assigns or replaces one row.</summary>
     internal static class ViewModify
     {
-        public static void Apply(ManagedDatabase database, BoundSelect query, int mode, object?[] values)
+        public static void Apply(EngineDatabase database, BoundSelect query, int mode, object?[] values)
         {
             if (!query.IsSingleTableWithoutFilter)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.FUNCTION_FAILED);
+                throw new MsiErrorException((uint) MsiError.FUNCTION_FAILED);
             }
             database.RequireWritable();
 
@@ -473,7 +473,7 @@ namespace IsWiX.WindowsInstaller
             IReadOnlyList<SqlColumn> outputs = query.OutputColumns;
             if (values.Length != outputs.Count)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_PARAMETER);
+                throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
             }
 
             // The record's fields, placed at their table positions. Columns the view does not name stay null.
@@ -541,7 +541,7 @@ namespace IsWiX.WindowsInstaller
                     break;
 
                 default:
-                    throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                    throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
             }
 
             database.Changed();
@@ -549,17 +549,17 @@ namespace IsWiX.WindowsInstaller
 
         /// <summary>The table, and the record's values placed at their table positions, for a single-table view.</summary>
         private static (MutableTable Table, object?[] Supplied, HashSet<int> Named, int[] Positions) Prepare(
-            ManagedDatabase database, BoundSelect query, object?[] values)
+            EngineDatabase database, BoundSelect query, object?[] values)
         {
             if (!query.IsSingleTableWithoutFilter)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.FUNCTION_FAILED);
+                throw new MsiErrorException((uint) MsiError.FUNCTION_FAILED);
             }
             MutableTable table = database.GetUserTable(query.SingleTable.Name)
                 ?? throw MutableTable.Failed();
             if (values.Length != query.OutputColumns.Count)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_PARAMETER);
+                throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
             }
             int[] positions = query.TableColumnIndexes;
             var supplied = new object?[table.Columns.Count];
@@ -571,7 +571,7 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>Refresh and Seek: the view's values for the row with the record's key.</summary>
-        public static object?[] Lookup(ManagedDatabase database, BoundSelect query, object?[] values)
+        public static object?[] Lookup(EngineDatabase database, BoundSelect query, object?[] values)
         {
             (MutableTable table, object?[] supplied, _, int[] positions) = Prepare(database, query, values);
             int existing = table.FindByKey(table.KeyOf(supplied));
@@ -586,7 +586,7 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>The Validate modes: checks the record against the table without changing it.</summary>
-        public static void Check(ManagedDatabase database, BoundSelect query, int mode, object?[] values)
+        public static void Check(EngineDatabase database, BoundSelect query, int mode, object?[] values)
         {
             (MutableTable table, object?[] supplied, HashSet<int> named, _) = Prepare(database, query, values);
             table.Validate(supplied, named);

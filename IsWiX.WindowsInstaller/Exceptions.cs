@@ -185,27 +185,27 @@ namespace IsWiX.WindowsInstaller
             msg = Combine(GetSystemMessage(errorCode), msg);
             switch (errorCode)
             {
-                case (uint) NativeMethods.Error.FILE_NOT_FOUND:
-                case (uint) NativeMethods.Error.PATH_NOT_FOUND: return new FileNotFoundException(msg);
+                case (uint) MsiError.FILE_NOT_FOUND:
+                case (uint) MsiError.PATH_NOT_FOUND: return new FileNotFoundException(msg);
                 
-                case (uint) NativeMethods.Error.INVALID_PARAMETER:
-                case (uint) NativeMethods.Error.DIRECTORY:
-                case (uint) NativeMethods.Error.UNKNOWN_PROPERTY:
-                case (uint) NativeMethods.Error.UNKNOWN_PRODUCT:
-                case (uint) NativeMethods.Error.UNKNOWN_FEATURE:
-                case (uint) NativeMethods.Error.UNKNOWN_COMPONENT: return new ArgumentException(msg);
+                case (uint) MsiError.INVALID_PARAMETER:
+                case (uint) MsiError.DIRECTORY:
+                case (uint) MsiError.UNKNOWN_PROPERTY:
+                case (uint) MsiError.UNKNOWN_PRODUCT:
+                case (uint) MsiError.UNKNOWN_FEATURE:
+                case (uint) MsiError.UNKNOWN_COMPONENT: return new ArgumentException(msg);
                 
-                case (uint) NativeMethods.Error.BAD_QUERY_SYNTAX: return new BadQuerySyntaxException(msg);
+                case (uint) MsiError.BAD_QUERY_SYNTAX: return new BadQuerySyntaxException(msg);
                 
-                case (uint) NativeMethods.Error.INVALID_HANDLE_STATE:
-                case (uint) NativeMethods.Error.INVALID_HANDLE:
+                case (uint) MsiError.INVALID_HANDLE_STATE:
+                case (uint) MsiError.INVALID_HANDLE:
                     InvalidHandleException ihex = new InvalidHandleException(msg);
                     ihex.errorCode = (int) errorCode;
                     return ihex;
                 
-                case (uint) NativeMethods.Error.INSTALL_USEREXIT: return new InstallCanceledException(msg);
+                case (uint) MsiError.INSTALL_USEREXIT: return new InstallCanceledException(msg);
                 
-                case (uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED: return new NotImplementedException(msg);
+                case (uint) MsiError.CALL_NOT_IMPLEMENTED: return new NotImplementedException(msg);
                 
                 default: return new InstallerException((int) errorCode, msg);
             }
@@ -217,7 +217,7 @@ namespace IsWiX.WindowsInstaller
             const uint FORMAT_MESSAGE_FROM_SYSTEM     = 0x00001000;
 
             StringBuilder buf = new StringBuilder(1024);
-            uint formatCount = NativeMethods.FormatMessage(
+            uint formatCount = MsiApi.FormatMessage(
                 FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
                 IntPtr.Zero,
                 (uint) errorCode,
@@ -239,7 +239,7 @@ namespace IsWiX.WindowsInstaller
         internal void SaveErrorRecord()
         {
             // TODO: pass an affinity handle here?
-            int recordHandle = NativeMethods.MsiGetLastErrorRecord();
+            int recordHandle = MsiApi.MsiGetLastErrorRecord();
             if (recordHandle != 0)
             {
                 using (Record errorRec = new Record(recordHandle, true, null))
@@ -280,7 +280,7 @@ namespace IsWiX.WindowsInstaller
         /// innerException parameter is not a null reference (Nothing in Visual Basic), the current exception
         /// is raised in a catch block that handles the inner exception.</param>
         public InstallCanceledException(string msg, Exception innerException)
-            : base((int) NativeMethods.Error.INSTALL_USEREXIT, msg, innerException)
+            : base((int) MsiError.INSTALL_USEREXIT, msg, innerException)
         {
         }
 
@@ -327,7 +327,7 @@ namespace IsWiX.WindowsInstaller
         /// innerException parameter is not a null reference (Nothing in Visual Basic), the current exception
         /// is raised in a catch block that handles the inner exception.</param>
         public BadQuerySyntaxException(string msg, Exception innerException)
-            : base((int) NativeMethods.Error.BAD_QUERY_SYNTAX, msg, innerException)
+            : base((int) MsiError.BAD_QUERY_SYNTAX, msg, innerException)
         {
         }
 
@@ -374,7 +374,7 @@ namespace IsWiX.WindowsInstaller
         /// innerException parameter is not a null reference (Nothing in Visual Basic), the current exception
         /// is raised in a catch block that handles the inner exception.</param>
         public InvalidHandleException(string msg, Exception innerException)
-            : base((int) NativeMethods.Error.INVALID_HANDLE, msg, innerException)
+            : base((int) MsiError.INVALID_HANDLE, msg, innerException)
         {
         }
 

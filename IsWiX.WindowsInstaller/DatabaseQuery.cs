@@ -38,7 +38,7 @@ namespace IsWiX.WindowsInstaller
             string sql = (args == null || args.Length == 0 ? sqlFormat :
                 String.Format(CultureInfo.InvariantCulture, sqlFormat, args));
             int viewHandle;
-            uint ret = NativeMethods.MsiDatabaseOpenView(this.Id, sql, out viewHandle);
+            uint ret = MsiApi.MsiDatabaseOpenView(this.Id, sql, out viewHandle);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -398,7 +398,7 @@ namespace IsWiX.WindowsInstaller
                 rec = view.Fetch();
                 if (rec == null)
                 {
-                    throw InstallerException.ExceptionFromReturnCode((uint) NativeMethods.Error.NO_MORE_ITEMS);
+                    throw InstallerException.ExceptionFromReturnCode((uint) MsiError.NO_MORE_ITEMS);
                 }
                 return rec[1];
             }

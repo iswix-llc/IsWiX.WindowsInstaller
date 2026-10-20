@@ -55,44 +55,8 @@ namespace IsWiX.WindowsInstaller
     /// read with MsiReader, so this works on any platform without msi.dll. Operations that would change a
     /// database, and summary information, return ERROR_CALL_NOT_IMPLEMENTED for now.
     /// </summary>
-    internal static class NativeMethods
+    internal static class MsiApi
     {
-        internal enum Error : uint
-        {
-            SUCCESS = 0,
-            FILE_NOT_FOUND = 2,
-            PATH_NOT_FOUND = 3,
-            ACCESS_DENIED = 5,
-            INVALID_HANDLE = 6,
-            INVALID_DATA = 13,
-            INVALID_PARAMETER = 87,
-            OPEN_FAILED = 110,
-            DISK_FULL = 112,
-            CALL_NOT_IMPLEMENTED = 120,
-            BAD_PATHNAME = 161,
-            NO_DATA = 232,
-            MORE_DATA = 234,
-            NO_MORE_ITEMS = 259,
-            DIRECTORY = 267,
-            INSTALL_USEREXIT = 1602,
-            INSTALL_FAILURE = 1603,
-            FILE_INVALID = 1006,
-            UNKNOWN_PRODUCT = 1605,
-            UNKNOWN_FEATURE = 1606,
-            UNKNOWN_COMPONENT = 1607,
-            UNKNOWN_PROPERTY = 1608,
-            INVALID_HANDLE_STATE = 1609,
-            INSTALL_SOURCE_ABSENT = 1612,
-            BAD_QUERY_SYNTAX = 1615,
-            INSTALL_PACKAGE_INVALID = 1620,
-            INSTALL_TRANSFORM_FAILURE = 1624,
-            FUNCTION_FAILED = 1627,
-            INVALID_TABLE = 1628,
-            DATATYPE_MISMATCH = 1629,
-            CREATE_FAILED = 1631,
-            SUCCESS_REBOOT_INITIATED = 1641,
-            SUCCESS_REBOOT_REQUIRED = 3010,
-        }
 
         internal enum SourceType : int
         {
@@ -149,9 +113,9 @@ namespace IsWiX.WindowsInstaller
                 long mode = uiOpenMode.ToInt64();
                 if (mode < 0 || mode > 2)
                 {
-                    throw new MsiErrorException((uint) Error.CALL_NOT_IMPLEMENTED);
+                    throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
                 }
-                handle = ManagedHandles.Add(ManagedDatabase.Open(szDatabasePath, (DatabaseMode) mode));
+                handle = HandleTable.Add(EngineDatabase.Open(szDatabasePath, (DatabaseMode) mode));
             });
             hDatabase = handle;
             return result;
@@ -160,14 +124,14 @@ namespace IsWiX.WindowsInstaller
         internal static uint MsiOpenDatabase(string szDatabasePath, string szPersist, out int hDatabase)
         {
             hDatabase = 0;
-            return (uint) Error.CALL_NOT_IMPLEMENTED;
+            return (uint) MsiError.CALL_NOT_IMPLEMENTED;
         }
 
         internal static int MsiGetDatabaseState(int hDatabase)
         {
             try
             {
-                ManagedHandles.Get<ManagedDatabase>(hDatabase);
+                HandleTable.Get<EngineDatabase>(hDatabase);
                 return 0; // MSIDBSTATE_READ
             }
             catch (MsiErrorException)
@@ -181,19 +145,19 @@ namespace IsWiX.WindowsInstaller
             int handle = 0;
             uint result = Guard(() =>
             {
-                ManagedDatabase database = ManagedHandles.Get<ManagedDatabase>(hDatabase);
+                EngineDatabase database = HandleTable.Get<EngineDatabase>(hDatabase);
                 if (szQuery == null)
                 {
-                    throw new MsiErrorException((uint) Error.INVALID_PARAMETER);
+                    throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
                 }
                 SqlStatement statement = new SqlParser(szQuery).ParseStatement();
-                ManagedView view = statement switch
+                EngineView view = statement switch
                 {
-                    SqlSelect select => new ManagedView(database, BoundSelect.Bind(select, database)),
-                    SqlCreateTable or SqlDropTable or SqlAlterTableAdd => new ManagedView(database, BoundDdl.Bind(statement, database)),
-                    _ => new ManagedView(database, BoundWrite.Bind(statement, database)),
+                    SqlSelect select => new EngineView(database, BoundSelect.Bind(select, database)),
+                    SqlCreateTable or SqlDropTable or SqlAlterTableAdd => new EngineView(database, BoundDdl.Bind(statement, database)),
+                    _ => new EngineView(database, BoundWrite.Bind(statement, database)),
                 };
-                handle = ManagedHandles.Add(view);
+                handle = HandleTable.Add(view);
             });
             hView = handle;
             return result;
@@ -201,12 +165,12 @@ namespace IsWiX.WindowsInstaller
 
         internal static uint MsiDatabaseMerge(int hDatabase, int hDatabaseMerge, string szTableName)
         {
-            return (uint) Error.CALL_NOT_IMPLEMENTED;
+            return (uint) MsiError.CALL_NOT_IMPLEMENTED;
         }
 
         internal static uint MsiDatabaseCommit(int hDatabase)
         {
-            return Guard(() => ManagedHandles.Get<ManagedDatabase>(hDatabase).Commit());
+            return Guard(() => HandleTable.Get<EngineDatabase>(hDatabase).Commit());
         }
 
         internal static uint MsiDatabaseGetPrimaryKeys(int hDatabase, string szTableName, out int hRecord)
@@ -214,13 +178,13 @@ namespace IsWiX.WindowsInstaller
             int handle = 0;
             uint result = Guard(() =>
             {
-                ManagedDatabase database = ManagedHandles.Get<ManagedDatabase>(hDatabase);
+                EngineDatabase database = HandleTable.Get<EngineDatabase>(hDatabase);
                 SqlTable table = database.FindTable(szTableName)
-                    ?? throw new MsiErrorException((uint) Error.INVALID_TABLE);
+                    ?? throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
                 object?[] keys = Array.ConvertAll(
                     System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Where(table.Columns, c => c.IsPrimaryKey)),
                     c => (object?) c.Name);
-                handle = ManagedHandles.Add(new ManagedRecord(keys));
+                handle = HandleTable.Add(new EngineRecord(keys));
             });
             hRecord = handle;
             return result;
@@ -230,7 +194,7 @@ namespace IsWiX.WindowsInstaller
         {
             try
             {
-                ManagedDatabase database = ManagedHandles.Get<ManagedDatabase>(hDatabase);
+                EngineDatabase database = HandleTable.Get<EngineDatabase>(hDatabase);
                 return database.ContainsTable(szTableName) ? 1u : 2u; // MSICONDITION_TRUE or MSICONDITION_NONE
             }
             catch (MsiErrorException)
@@ -241,37 +205,37 @@ namespace IsWiX.WindowsInstaller
 
         internal static uint MsiDatabaseExport(int hDatabase, string szTableName, string szFolderPath, string szFileName)
         {
-            return Guard(() => ManagedHandles.Get<ManagedDatabase>(hDatabase).Export(szTableName, System.IO.Path.Combine(szFolderPath, szFileName)));
+            return Guard(() => HandleTable.Get<EngineDatabase>(hDatabase).Export(szTableName, System.IO.Path.Combine(szFolderPath, szFileName)));
         }
 
         internal static uint MsiDatabaseImport(int hDatabase, string szFolderPath, string szFileName)
         {
-            return Guard(() => ManagedHandles.Get<ManagedDatabase>(hDatabase).Import(System.IO.Path.Combine(szFolderPath, szFileName)));
+            return Guard(() => HandleTable.Get<EngineDatabase>(hDatabase).Import(System.IO.Path.Combine(szFolderPath, szFileName)));
         }
 
         internal static uint MsiDatabaseGenerateTransform(int hDatabase, int hDatabaseReference, string szTransformFile, int iReserved1, int iReserved2)
         {
-            return (uint) Error.CALL_NOT_IMPLEMENTED;
+            return (uint) MsiError.CALL_NOT_IMPLEMENTED;
         }
 
         internal static uint MsiCreateTransformSummaryInfo(int hDatabase, int hDatabaseReference, string szTransformFile, int iErrorConditions, int iValidation)
         {
-            return (uint) Error.CALL_NOT_IMPLEMENTED;
+            return (uint) MsiError.CALL_NOT_IMPLEMENTED;
         }
 
         internal static uint MsiDatabaseApplyTransform(int hDatabase, string szTransformFile, int iErrorConditions)
         {
-            return Guard(() => ManagedHandles.Get<ManagedDatabase>(hDatabase).ApplyTransform(szTransformFile));
+            return Guard(() => HandleTable.Get<EngineDatabase>(hDatabase).ApplyTransform(szTransformFile));
         }
 
         internal static uint MsiViewExecute(int hView, int hRecord)
         {
             return Guard(() =>
             {
-                ManagedView view = ManagedHandles.Get<ManagedView>(hView);
+                EngineView view = HandleTable.Get<EngineView>(hView);
                 object?[] markers = hRecord == 0
                     ? Array.Empty<object?>()
-                    : ManagedHandles.Get<ManagedRecord>(hRecord).Values();
+                    : HandleTable.Get<EngineRecord>(hRecord).Values();
                 view.Execute(markers);
             });
         }
@@ -281,9 +245,9 @@ namespace IsWiX.WindowsInstaller
             int handle = 0;
             uint result = Guard(() =>
             {
-                ManagedRecord record = ManagedHandles.Get<ManagedView>(hView).Fetch()
-                    ?? throw new MsiErrorException((uint) Error.NO_MORE_ITEMS);
-                handle = ManagedHandles.Add(record);
+                EngineRecord record = HandleTable.Get<EngineView>(hView).Fetch()
+                    ?? throw new MsiErrorException((uint) MsiError.NO_MORE_ITEMS);
+                handle = HandleTable.Add(record);
             });
             hRecord = handle;
             return result;
@@ -293,8 +257,8 @@ namespace IsWiX.WindowsInstaller
         {
             return Guard(() =>
             {
-                ManagedView view = ManagedHandles.Get<ManagedView>(hView);
-                ManagedRecord record = ManagedHandles.Get<ManagedRecord>(hRecord);
+                EngineView view = HandleTable.Get<EngineView>(hView);
+                EngineRecord record = HandleTable.Get<EngineRecord>(hRecord);
                 if (iModifyMode == (int) ViewModifyMode.Refresh || iModifyMode == (int) ViewModifyMode.Seek)
                 {
                     // These fill the record in place rather than change the table.
@@ -313,7 +277,7 @@ namespace IsWiX.WindowsInstaller
         {
             try
             {
-                ManagedHandles.Get<ManagedView>(hView);
+                HandleTable.Get<EngineView>(hView);
             }
             catch (MsiErrorException)
             {
@@ -327,9 +291,9 @@ namespace IsWiX.WindowsInstaller
             int handle = 0;
             uint result = Guard(() =>
             {
-                ManagedView view = ManagedHandles.Get<ManagedView>(hView);
+                EngineView view = HandleTable.Get<EngineView>(hView);
                 IReadOnlyList<SqlColumn> columns = view.Query?.OutputColumns
-                    ?? throw new MsiErrorException((uint) Error.FUNCTION_FAILED);
+                    ?? throw new MsiErrorException((uint) MsiError.FUNCTION_FAILED);
 
                 // MSICOLINFO_NAMES is 0 and MSICOLINFO_TYPES is 1.
                 var values = new object?[columns.Count];
@@ -338,7 +302,7 @@ namespace IsWiX.WindowsInstaller
                     SqlColumn column = columns[i];
                     values[i] = eColumnInfo == 0 ? column.Name : column.TypeCode;
                 }
-                handle = ManagedHandles.Add(new ManagedRecord(values));
+                handle = HandleTable.Add(new EngineRecord(values));
             });
             hRecord = handle;
             return result;
@@ -348,7 +312,7 @@ namespace IsWiX.WindowsInstaller
         {
             try
             {
-                return ManagedHandles.Add(new ManagedRecord((int) cParams));
+                return HandleTable.Add(new EngineRecord((int) cParams));
             }
             catch (MsiErrorException)
             {
@@ -360,7 +324,7 @@ namespace IsWiX.WindowsInstaller
         {
             try
             {
-                ManagedRecord record = ManagedHandles.Get<ManagedRecord>(hRecord);
+                EngineRecord record = HandleTable.Get<EngineRecord>(hRecord);
                 string template = record.GetString(0);
                 string text = Regex.Replace(template, @"\[(\d+)\]", match =>
                 {
@@ -377,14 +341,14 @@ namespace IsWiX.WindowsInstaller
 
         internal static uint MsiRecordClearData(int hRecord)
         {
-            return Guard(() => ManagedHandles.Get<ManagedRecord>(hRecord).Clear());
+            return Guard(() => HandleTable.Get<EngineRecord>(hRecord).Clear());
         }
 
         internal static uint MsiRecordGetFieldCount(int hRecord)
         {
             try
             {
-                return (uint) ManagedHandles.Get<ManagedRecord>(hRecord).FieldCount;
+                return (uint) HandleTable.Get<EngineRecord>(hRecord).FieldCount;
             }
             catch (MsiErrorException)
             {
@@ -396,7 +360,7 @@ namespace IsWiX.WindowsInstaller
         {
             try
             {
-                return ManagedHandles.Get<ManagedRecord>(hRecord)[iField] == null;
+                return HandleTable.Get<EngineRecord>(hRecord)[iField] == null;
             }
             catch (MsiErrorException)
             {
@@ -408,7 +372,7 @@ namespace IsWiX.WindowsInstaller
         {
             try
             {
-                return ManagedHandles.Get<ManagedRecord>(hRecord).GetInteger(iField);
+                return HandleTable.Get<EngineRecord>(hRecord).GetInteger(iField);
             }
             catch (MsiErrorException)
             {
@@ -420,7 +384,7 @@ namespace IsWiX.WindowsInstaller
         {
             try
             {
-                string value = ManagedHandles.Get<ManagedRecord>(hRecord).GetString(iField);
+                string value = HandleTable.Get<EngineRecord>(hRecord).GetString(iField);
                 return WriteString(value, szValueBuf, ref cchValueBuf);
             }
             catch (MsiErrorException e)
@@ -434,7 +398,7 @@ namespace IsWiX.WindowsInstaller
             return Guard(() =>
             {
                 // MSI_NULL_INTEGER clears the field.
-                ManagedHandles.Get<ManagedRecord>(hRecord).Set(iField, iValue == int.MinValue ? null : (object) iValue);
+                HandleTable.Get<EngineRecord>(hRecord).Set(iField, iValue == int.MinValue ? null : (object) iValue);
             });
         }
 
@@ -442,7 +406,7 @@ namespace IsWiX.WindowsInstaller
         {
             return Guard(() =>
             {
-                ManagedHandles.Get<ManagedRecord>(hRecord).Set(iField, string.IsNullOrEmpty(szValue) ? null : szValue);
+                HandleTable.Get<EngineRecord>(hRecord).Set(iField, string.IsNullOrEmpty(szValue) ? null : szValue);
             });
         }
 
@@ -450,7 +414,7 @@ namespace IsWiX.WindowsInstaller
         {
             try
             {
-                object? value = ManagedHandles.Get<ManagedRecord>(hRecord)[iField];
+                object? value = HandleTable.Get<EngineRecord>(hRecord)[iField];
                 switch (value)
                 {
                     case null:
@@ -473,7 +437,7 @@ namespace IsWiX.WindowsInstaller
         {
             try
             {
-                ManagedRecord record = ManagedHandles.Get<ManagedRecord>(hRecord);
+                EngineRecord record = HandleTable.Get<EngineRecord>(hRecord);
                 object? value = record[iField];
                 if (value == null)
                 {
@@ -482,7 +446,7 @@ namespace IsWiX.WindowsInstaller
                 }
                 if (value is not byte[] data)
                 {
-                    throw new MsiErrorException((uint) Error.DATATYPE_MISMATCH);
+                    throw new MsiErrorException((uint) MsiError.DATATYPE_MISMATCH);
                 }
 
                 // Each read continues where the previous one stopped, as the Windows Installer API does.
@@ -506,7 +470,7 @@ namespace IsWiX.WindowsInstaller
         {
             return Guard(() =>
             {
-                ManagedRecord record = ManagedHandles.Get<ManagedRecord>(hRecord);
+                EngineRecord record = HandleTable.Get<EngineRecord>(hRecord);
                 byte[]? data = szFilePath == null ? null : System.IO.File.ReadAllBytes(szFilePath);
                 record.Set(iField, data);
             });
@@ -519,34 +483,34 @@ namespace IsWiX.WindowsInstaller
             {
                 // A non-zero update count asks for a handle that can be written.
                 bool writable = uiUpdateCount > 0;
-                ManagedSummary summary;
+                EngineSummary summary;
                 if (hDatabase != 0)
                 {
-                    ManagedDatabase database = ManagedHandles.Get<ManagedDatabase>(hDatabase);
+                    EngineDatabase database = HandleTable.Get<EngineDatabase>(hDatabase);
                     if (writable)
                     {
                         database.RequireWritable();
                     }
-                    summary = ManagedSummary.Open(database, ownsDatabase: false, writable);
+                    summary = EngineSummary.Open(database, ownsDatabase: false, writable);
                 }
                 else
                 {
                     if (szDatabasePath == null)
                     {
-                        throw new MsiErrorException((uint) Error.INVALID_PARAMETER);
+                        throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
                     }
                     if (!writable)
                     {
                         // Read-only summaries come straight from the file, so transforms can be read too.
-                        summary = ManagedSummary.OpenFile(szDatabasePath);
+                        summary = EngineSummary.OpenFile(szDatabasePath);
                     }
                     else
                     {
-                        ManagedDatabase database = ManagedDatabase.Open(szDatabasePath, DatabaseMode.Transact);
-                        summary = ManagedSummary.Open(database, ownsDatabase: true, writable);
+                        EngineDatabase database = EngineDatabase.Open(szDatabasePath, DatabaseMode.Transact);
+                        summary = EngineSummary.Open(database, ownsDatabase: true, writable);
                     }
                 }
-                handle = ManagedHandles.Add(summary);
+                handle = HandleTable.Add(summary);
             });
             hSummaryInfo = handle;
             return result;
@@ -558,7 +522,7 @@ namespace IsWiX.WindowsInstaller
             int number = 0;
             long fileTime = 0;
             string? text = null;
-            uint result = Guard(() => ManagedHandles.Get<ManagedSummary>(hSummaryInfo)
+            uint result = Guard(() => HandleTable.Get<EngineSummary>(hSummaryInfo)
                 .Get(uiProperty, out type, out number, out fileTime, out text));
 
             uiDataType = type;
@@ -574,18 +538,18 @@ namespace IsWiX.WindowsInstaller
         internal static uint MsiSummaryInfoSetProperty(int hSummaryInfo, uint uiProperty, uint uiDataType, int iValue, ref long ftValue, string szValue)
         {
             long fileTime = ftValue;
-            return Guard(() => ManagedHandles.Get<ManagedSummary>(hSummaryInfo)
+            return Guard(() => HandleTable.Get<EngineSummary>(hSummaryInfo)
                 .Set(uiProperty, uiDataType, iValue, fileTime, szValue));
         }
 
         internal static uint MsiSummaryInfoPersist(int hSummaryInfo)
         {
-            return Guard(() => ManagedHandles.Get<ManagedSummary>(hSummaryInfo).Persist());
+            return Guard(() => HandleTable.Get<EngineSummary>(hSummaryInfo).Persist());
         }
 
         internal static uint MsiCloseHandle(int hAny)
         {
-            return Guard(() => ManagedHandles.Close(hAny));
+            return Guard(() => HandleTable.Close(hAny));
         }
 
         internal static int MsiGetLastErrorRecord()
@@ -620,7 +584,7 @@ namespace IsWiX.WindowsInstaller
             try
             {
                 operation();
-                return (uint) Error.SUCCESS;
+                return (uint) MsiError.SUCCESS;
             }
             catch (MsiErrorException e)
             {
@@ -637,12 +601,12 @@ namespace IsWiX.WindowsInstaller
             if (value.Length + 1 > buffer.Capacity)
             {
                 cch = (uint) value.Length;
-                return (uint) Error.MORE_DATA;
+                return (uint) MsiError.MORE_DATA;
             }
             buffer.Clear();
             buffer.Append(value);
             cch = (uint) value.Length;
-            return (uint) Error.SUCCESS;
+            return (uint) MsiError.SUCCESS;
         }
     }
 }

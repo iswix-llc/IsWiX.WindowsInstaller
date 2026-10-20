@@ -1,5 +1,3 @@
-// Managed implementation of the Windows Installer handle model. Databases, views and records are
-// kept in a process-wide table and referred to by the integer handles that NativeMethods returns.
 namespace IsWiX.WindowsInstaller
 {
     using System;
@@ -10,82 +8,11 @@ namespace IsWiX.WindowsInstaller
     using System.Text;
     using MsiReader;
 
-    /// <summary>Carries a Windows Installer error code out of a managed operation.</summary>
-    internal sealed class MsiErrorException : Exception
-    {
-        public MsiErrorException(uint code)
-            : base("Windows Installer error " + code.ToString(CultureInfo.InvariantCulture))
-        {
-            Code = code;
-        }
-
-        public uint Code { get; }
-    }
-
-    internal static class ManagedHandles
-    {
-        private static readonly object SyncRoot = new object();
-        private static readonly Dictionary<int, object> Items = new Dictionary<int, object>();
-        private static int nextHandle = 1;
-
-        public static int Add(object item)
-        {
-            lock (SyncRoot)
-            {
-                int handle = nextHandle++;
-                Items[handle] = item;
-                return handle;
-            }
-        }
-
-        public static T Get<T>(int handle) where T : class
-        {
-            lock (SyncRoot)
-            {
-                if (Items.TryGetValue(handle, out object? item) && item is T typed)
-                {
-                    return typed;
-                }
-            }
-            throw new MsiErrorException((uint) NativeMethods.Error.INVALID_HANDLE);
-        }
-
-        public static void Close(int handle)
-        {
-            object? item;
-            lock (SyncRoot)
-            {
-                if (!Items.TryGetValue(handle, out item))
-                {
-                    throw new MsiErrorException((uint) NativeMethods.Error.INVALID_HANDLE);
-                }
-                Items.Remove(handle);
-            }
-            if (item is IDisposable disposable)
-            {
-                disposable.Dispose();
-            }
-        }
-    }
-
-    /// <summary>An open database, read from a file with MsiReader.</summary>
-    /// <summary>MSIDBOPEN_READONLY, MSIDBOPEN_TRANSACT and MSIDBOPEN_DIRECT.</summary>
-    internal enum DatabaseMode
-    {
-        ReadOnly = 0,
-
-        /// <summary>Changes are kept in memory until Commit is called.</summary>
-        Transact = 1,
-
-        /// <summary>Each change is written to the file as soon as it is made.</summary>
-        Direct = 2,
-    }
-
     /// <summary>
     /// A database opened for reading, and for writing when it is not read-only. Tables are loaded into memory
     /// the first time they are used; Commit writes the whole database back through <see cref="MsiWriter"/>.
     /// </summary>
-    internal sealed class ManagedDatabase : IDisposable
+    internal sealed class EngineDatabase : IDisposable
     {
         private readonly string path;
         private readonly Dictionary<string, MutableTable> tables = new Dictionary<string, MutableTable>(StringComparer.OrdinalIgnoreCase);
@@ -99,7 +26,7 @@ namespace IsWiX.WindowsInstaller
         private readonly Dictionary<string, long> newKeyRanks = new Dictionary<string, long>(StringComparer.Ordinal);
         private const long NewStringBase = 1L << 32;
 
-        private ManagedDatabase(MsiDatabase reader, string path, DatabaseMode mode)
+        private EngineDatabase(MsiDatabase reader, string path, DatabaseMode mode)
         {
             this.reader = reader;
             this.path = path;
@@ -108,40 +35,40 @@ namespace IsWiX.WindowsInstaller
 
         public DatabaseMode Mode { get; }
 
-        public static ManagedDatabase Open(string path)
+        public static EngineDatabase Open(string path)
         {
             return Open(path, DatabaseMode.ReadOnly);
         }
 
-        public static ManagedDatabase Open(string path, DatabaseMode mode)
+        public static EngineDatabase Open(string path, DatabaseMode mode)
         {
             try
             {
-                return new ManagedDatabase(MsiDatabase.Open(path), path, mode);
+                return new EngineDatabase(MsiDatabase.Open(path), path, mode);
             }
             catch (FileNotFoundException)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.FILE_NOT_FOUND);
+                throw new MsiErrorException((uint) MsiError.FILE_NOT_FOUND);
             }
             catch (DirectoryNotFoundException)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.PATH_NOT_FOUND);
+                throw new MsiErrorException((uint) MsiError.PATH_NOT_FOUND);
             }
             catch (UnauthorizedAccessException)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.ACCESS_DENIED);
+                throw new MsiErrorException((uint) MsiError.ACCESS_DENIED);
             }
             catch (ArgumentException)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_PARAMETER);
+                throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
             }
             catch (IOException)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.OPEN_FAILED);
+                throw new MsiErrorException((uint) MsiError.OPEN_FAILED);
             }
             catch (MsiFormatException)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_PACKAGE_INVALID);
+                throw new MsiErrorException((uint) MsiError.INSTALL_PACKAGE_INVALID);
             }
         }
 
@@ -402,11 +329,11 @@ namespace IsWiX.WindowsInstaller
             }
             catch (FileNotFoundException)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.FILE_NOT_FOUND);
+                throw new MsiErrorException((uint) MsiError.FILE_NOT_FOUND);
             }
             catch (MsiFormatException)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
             }
 
             using (transform)
@@ -428,11 +355,11 @@ namespace IsWiX.WindowsInstaller
                     }
                     if (deletedTables.Contains(stream.Key, StringComparer.OrdinalIgnoreCase))
                     {
-                        throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                        throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
                     }
                     MutableTable table = this.GetUserTable(stream.Key)
                         ?? (newTables.TryGetValue(stream.Key, out MutableTable? defined) ? defined : null)
-                        ?? throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                        ?? throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
                     changes.AddRange(PlanRows(table, stream.Value, transform, this.reader, this.newKeyRanks));
                 }
 
@@ -469,14 +396,14 @@ namespace IsWiX.WindowsInstaller
                     continue;
                 }
                 string name = transform.GetString((uint) ReadWord(tablesStream, position + 2))
-                    ?? throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                    ?? throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
                 if (!this.reader.ContainsTable(name) || this.IsRemoved(name))
                 {
-                    throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                    throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
                 }
                 if (deleted.Contains(name, StringComparer.OrdinalIgnoreCase))
                 {
-                    throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                    throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
                 }
                 deleted.Add(name);
             }
@@ -500,7 +427,7 @@ namespace IsWiX.WindowsInstaller
             }
             if (tablesStream == null || (columnsStream != null && columnsStream.Length % 10 != 0) || tablesStream.Length % 4 != 0)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
             }
             byte[] columnsData = columnsStream ?? new byte[0];
 
@@ -515,13 +442,13 @@ namespace IsWiX.WindowsInstaller
                 }
                 if (header != 0x0101)
                 {
-                    throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                    throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
                 }
                 string name = transform.GetString((uint) ReadWord(tablesStream, position + 2))
-                    ?? throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                    ?? throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
                 if (this.ContainsTable(name) || names.Contains(name, StringComparer.OrdinalIgnoreCase))
                 {
-                    throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                    throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
                 }
                 names.Add(name);
             }
@@ -531,22 +458,22 @@ namespace IsWiX.WindowsInstaller
             {
                 if (ReadWord(columnsData, position) != 0x0401)
                 {
-                    throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                    throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
                 }
                 string tableName = transform.GetString((uint) ReadWord(columnsData, position + 2))
-                    ?? throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                    ?? throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
                 string columnName = transform.GetString((uint) ReadWord(columnsData, position + 6))
-                    ?? throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                    ?? throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
                 if (!columns.TryGetValue(tableName, out List<SqlColumn>? list))
                 {
-                    throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                    throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
                 }
 
                 // Bit 0x8000 marks a column the transform adds. Only string columns are supported.
                 int type = ReadWord(columnsData, position + 8) & 0x7FFF;
                 if ((type & 0x0800) == 0)
                 {
-                    throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                    throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
                 }
                 list.Add(new SqlColumn(tableName, columnName, MsiColumnType.String, type & 0xFF,
                     (type & 0x1000) != 0, (type & 0x2000) != 0, (type & 0x0200) != 0));
@@ -557,7 +484,7 @@ namespace IsWiX.WindowsInstaller
                 List<SqlColumn> list = columns[name];
                 if (list.Count == 0 || !list.Any(c => c.IsPrimaryKey))
                 {
-                    throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                    throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
                 }
                 result[name] = new MutableTable(name, list, new List<object?[]>());
             }
@@ -731,7 +658,7 @@ namespace IsWiX.WindowsInstaller
             {
                 if (position + 4 > data.Length)
                 {
-                    throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                    throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
                 }
                 int header = ReadWord(data, position);
                 string? key = TransformString(data, position + 2, transform);
@@ -748,7 +675,7 @@ namespace IsWiX.WindowsInstaller
                     RequireTwoStringColumns(table);
                     if (position + 6 > data.Length)
                     {
-                        throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                        throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
                     }
                     string? value = TransformString(data, position + 4, transform);
                     int keyId = ReadWord(data, position + 2);
@@ -759,7 +686,7 @@ namespace IsWiX.WindowsInstaller
 
                 if ((header & 0x0001) != 0 || (header & 0xFE00) != 0 || !HasSingleKey(table))
                 {
-                    throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                    throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
                 }
                 var columns = new List<int>();
                 for (int bit = 1; bit < 16; bit++)
@@ -773,13 +700,13 @@ namespace IsWiX.WindowsInstaller
                 {
                     if (column >= table.Columns.Count || !IsModifiable(table.Columns[column]))
                     {
-                        throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                        throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
                     }
                 }
                 int end = position + 4 + 2 * columns.Count;
                 if (columns.Count == 0 || end > data.Length)
                 {
-                    throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                    throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
                 }
                 var values = new object?[columns.Count];
                 for (int n = 0; n < columns.Count; n++)
@@ -838,7 +765,7 @@ namespace IsWiX.WindowsInstaller
                 && table.Columns[1].Type == MsiColumnType.String;
             if (!ok)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
             }
         }
 
@@ -862,7 +789,7 @@ namespace IsWiX.WindowsInstaller
             }
             else
             {
-                SqlTable sqlTable = this.FindTable(table) ?? throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                SqlTable sqlTable = this.FindTable(table) ?? throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
                 string folder = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".";
                 text = FormatIdt(sqlTable, folder);
             }
@@ -884,16 +811,16 @@ namespace IsWiX.WindowsInstaller
             }
             catch (IOException)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.FILE_NOT_FOUND);
+                throw new MsiErrorException((uint) MsiError.FILE_NOT_FOUND);
             }
             catch (UnauthorizedAccessException)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.ACCESS_DENIED);
+                throw new MsiErrorException((uint) MsiError.ACCESS_DENIED);
             }
 
             if (lines.Length < 3)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
             }
             if (lines[0].Length == 0 && lines[1].Length == 0)
             {
@@ -911,12 +838,12 @@ namespace IsWiX.WindowsInstaller
             string[] keyLine = lines[2].Split('\t');
             if (names.Length != types.Length || keyLine.Length < 2)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
             }
             string tableName = keyLine[0];
             if (tableName.StartsWith('_') || tableName.Length == 0)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
             }
 
             var columns = new List<SqlColumn>();
@@ -927,7 +854,7 @@ namespace IsWiX.WindowsInstaller
             }
             if (!columns.Any(c => c.IsPrimaryKey))
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
             }
 
             var table = new MutableTable(tableName, columns, new List<object?[]>());
@@ -940,7 +867,7 @@ namespace IsWiX.WindowsInstaller
                 string[] cells = lines[line].Split('\t');
                 if (cells.Length != columns.Count)
                 {
-                    throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                    throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
                 }
                 var row = new object?[columns.Count];
                 for (int i = 0; i < columns.Count; i++)
@@ -963,7 +890,7 @@ namespace IsWiX.WindowsInstaller
             this.RequireWritable();
             if (codePage < 0 || codePage > 0xFFFF)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_PARAMETER);
+                throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
             }
             if (codePage != 0)
             {
@@ -974,7 +901,7 @@ namespace IsWiX.WindowsInstaller
                 }
                 catch (ArgumentException)
                 {
-                    throw new MsiErrorException((uint) NativeMethods.Error.INVALID_PARAMETER);
+                    throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
                 }
             }
             this.codePageOverride = codePage;
@@ -985,20 +912,20 @@ namespace IsWiX.WindowsInstaller
         {
             if (type.Length < 2)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
             }
             bool nullable = char.IsUpper(type[0]);
             char letter = char.ToLowerInvariant(type[0]);
             if (!int.TryParse(type.Substring(1), NumberStyles.None, CultureInfo.InvariantCulture, out int size) || size < 0)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
             }
             switch (letter)
             {
                 case 'i':
                     if (size != 2 && size != 4)
                     {
-                        throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                        throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
                     }
                     return new SqlColumn(tableName, name, MsiColumnType.Integer, size, nullable, isKey, false);
                 case 's':
@@ -1008,7 +935,7 @@ namespace IsWiX.WindowsInstaller
                 case 'v':
                     return new SqlColumn(tableName, name, MsiColumnType.Binary, 0, nullable, isKey, false);
                 default:
-                    throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                    throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
             }
         }
 
@@ -1025,7 +952,7 @@ namespace IsWiX.WindowsInstaller
                     }
                     if (!int.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out int number))
                     {
-                        throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                        throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
                     }
                     return number;
                 case MsiColumnType.Binary:
@@ -1036,7 +963,7 @@ namespace IsWiX.WindowsInstaller
                     // The file must sit beside the IDT: a name with a folder part is not a binary cell.
                     if (Path.GetFileName(text) != text)
                     {
-                        throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                        throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
                     }
                     try
                     {
@@ -1044,14 +971,14 @@ namespace IsWiX.WindowsInstaller
                     }
                     catch (FileNotFoundException)
                     {
-                        throw new MsiErrorException((uint) NativeMethods.Error.FILE_NOT_FOUND);
+                        throw new MsiErrorException((uint) MsiError.FILE_NOT_FOUND);
                     }
                     catch (DirectoryNotFoundException)
                     {
-                        throw new MsiErrorException((uint) NativeMethods.Error.FILE_NOT_FOUND);
+                        throw new MsiErrorException((uint) MsiError.FILE_NOT_FOUND);
                     }
                 default:
-                    throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                    throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
             }
         }
 
@@ -1230,212 +1157,6 @@ namespace IsWiX.WindowsInstaller
                 rows.Add(new object?[] { name, new LazyBinary(this.reader.StreamLength(name) ?? 0, () => this.ReadPlainStream(name)) });
             }
             return new SqlTable("_Streams", columns, rows);
-        }
-    }
-
-    /// <summary>A record: field 0 is the format template, fields 1..n hold values.</summary>
-    internal sealed class ManagedRecord
-    {
-        private readonly object?[] fields;
-        private readonly Dictionary<uint, int> readOffsets = new Dictionary<uint, int>();
-
-        public ManagedRecord(int count)
-        {
-            this.fields = new object?[count + 1];
-        }
-
-        public ManagedRecord(IReadOnlyList<object?> values)
-            : this(values.Count)
-        {
-            for (int i = 0; i < values.Count; i++)
-            {
-                this.fields[i + 1] = values[i];
-            }
-        }
-
-        public int FieldCount => this.fields.Length - 1;
-
-        public object? this[uint field]
-        {
-            get
-            {
-                this.CheckField(field);
-                return this.fields[field];
-            }
-        }
-
-        public void Set(uint field, object? value)
-        {
-            this.CheckField(field);
-            this.fields[field] = value;
-            this.readOffsets.Remove(field);
-        }
-
-        public void Clear()
-        {
-            for (int i = 0; i < this.fields.Length; i++)
-            {
-                this.fields[i] = null;
-            }
-            this.readOffsets.Clear();
-        }
-
-        public int ReadOffset(uint field)
-        {
-            return this.readOffsets.TryGetValue(field, out int offset) ? offset : 0;
-        }
-
-        public void SetReadOffset(uint field, int offset)
-        {
-            this.readOffsets[field] = offset;
-        }
-
-        /// <summary>Returns fields 1..n, the parameter values a query is executed with.</summary>
-        public object?[] Values()
-        {
-            var values = new object?[this.FieldCount];
-            Array.Copy(this.fields, 1, values, 0, this.FieldCount);
-            return values;
-        }
-
-        public string GetString(uint field)
-        {
-            switch (this[field])
-            {
-                case null:
-                    return string.Empty;
-                case string text:
-                    return text;
-                case int number:
-                    return number.ToString(CultureInfo.InvariantCulture);
-                default:
-                    throw new MsiErrorException((uint) NativeMethods.Error.DATATYPE_MISMATCH);
-            }
-        }
-
-        public int GetInteger(uint field)
-        {
-            switch (this[field])
-            {
-                case int number:
-                    return number;
-                case string text when int.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out int parsed):
-                    return parsed;
-                default:
-                    return int.MinValue;
-            }
-        }
-
-        private void CheckField(uint field)
-        {
-            if (field > this.FieldCount)
-            {
-                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_PARAMETER);
-            }
-        }
-    }
-
-    /// <summary>
-    /// A prepared statement. A SELECT returns rows from Fetch; an INSERT, UPDATE or DELETE changes the
-    /// database when it is executed and returns no rows. Modify applies one record to a single-table view.
-    /// </summary>
-    internal sealed class ManagedView
-    {
-        private readonly ManagedDatabase database;
-        private readonly BoundWrite? write;
-        private readonly BoundDdl? ddl;
-        private bool executed;
-        private int position;
-
-        public ManagedView(ManagedDatabase database, BoundSelect query)
-        {
-            this.database = database;
-            this.Query = query;
-        }
-
-        public ManagedView(ManagedDatabase database, BoundWrite write)
-        {
-            this.database = database;
-            this.write = write;
-        }
-
-        public ManagedView(ManagedDatabase database, BoundDdl ddl)
-        {
-            this.database = database;
-            this.ddl = ddl;
-        }
-
-        /// <summary>The SELECT this view runs, or null for a write statement.</summary>
-        public BoundSelect? Query { get; }
-
-        public SqlResult? Result { get; private set; }
-
-        public int MarkerCount => this.Query?.MarkerCount ?? this.write?.MarkerCount ?? this.ddl!.MarkerCount;
-
-        public void Execute(object?[] markers)
-        {
-            if (this.write != null || this.ddl != null)
-            {
-                if (this.write != null)
-                {
-                    this.write.Execute(markers);
-                }
-                else
-                {
-                    this.ddl!.Execute(markers);
-                }
-                this.executed = true;
-                return;
-            }
-            this.Result = this.Query!.Execute(markers);
-            this.position = 0;
-        }
-
-        /// <summary>Returns the next row as a record, or null when the rows are exhausted.</summary>
-        public ManagedRecord? Fetch()
-        {
-            if (this.write != null || this.ddl != null)
-            {
-                if (!this.executed)
-                {
-                    throw new MsiErrorException((uint) NativeMethods.Error.FUNCTION_FAILED);
-                }
-                return null;
-            }
-            if (this.Result == null)
-            {
-                throw new MsiErrorException((uint) NativeMethods.Error.FUNCTION_FAILED);
-            }
-            if (this.position >= this.Result.Rows.Count)
-            {
-                return null;
-            }
-            return new ManagedRecord(this.Result.Rows[this.position++]);
-        }
-
-        /// <summary>Applies one record to the view's table, as MsiViewModify does.</summary>
-        public void Modify(int mode, object?[] values)
-        {
-            if (this.Query == null)
-            {
-                throw new MsiErrorException((uint) NativeMethods.Error.FUNCTION_FAILED);
-            }
-            if (mode >= (int) ViewModifyMode.Validate && mode <= (int) ViewModifyMode.ValidateDelete)
-            {
-                ViewModify.Check(this.database, this.Query, mode, values);
-                return;
-            }
-            ViewModify.Apply(this.database, this.Query, mode, values);
-        }
-
-        /// <summary>The view's values for the row whose key the record names, as MsiViewModify's Refresh and Seek give them.</summary>
-        public object?[] Lookup(object?[] values)
-        {
-            if (this.Query == null)
-            {
-                throw new MsiErrorException((uint) NativeMethods.Error.FUNCTION_FAILED);
-            }
-            return ViewModify.Lookup(this.database, this.Query, values);
         }
     }
 }

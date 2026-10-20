@@ -169,7 +169,7 @@ namespace IsWiX.WindowsInstaller
         {
             get
             {
-                int state = NativeMethods.MsiGetDatabaseState(this.Id);
+                int state = MsiApi.MsiGetDatabaseState(this.Id);
                 return state != 1;
             }
         }
@@ -266,7 +266,7 @@ namespace IsWiX.WindowsInstaller
                         {
                             int summaryInfoHandle;
                             int maxProperties = this.IsReadOnly ? 0 : SummaryInfo.MAX_PROPERTIES;
-                            uint ret = NativeMethods.MsiGetSummaryInformation(this.Id, null, (uint) maxProperties, out summaryInfoHandle);
+                            uint ret = MsiApi.MsiGetSummaryInformation(this.Id, null, (uint) maxProperties, out summaryInfoHandle);
                             if (ret != 0)
                             {
                                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -295,7 +295,7 @@ namespace IsWiX.WindowsInstaller
                 (int) handle,
                 ownsHandle,
                 null,
-                NativeMethods.MsiGetDatabaseState((int) handle) == 1 ? DatabaseOpenMode.Direct : DatabaseOpenMode.ReadOnly);
+                MsiApi.MsiGetDatabaseState((int) handle) == 1 ? DatabaseOpenMode.Direct : DatabaseOpenMode.ReadOnly);
         }
 
         /// <summary>
@@ -368,14 +368,14 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("otherDatabase");
             }
 
-            uint ret = NativeMethods.MsiDatabaseMerge(this.Id, otherDatabase.Id, errorTable);
+            uint ret = MsiApi.MsiDatabaseMerge(this.Id, otherDatabase.Id, errorTable);
             if (ret != 0)
             {
-                if (ret == (uint) NativeMethods.Error.FUNCTION_FAILED)
+                if (ret == (uint) MsiError.FUNCTION_FAILED)
                 {
                     throw new MergeException(this, errorTable);
                 }
-                else if (ret == (uint) NativeMethods.Error.DATATYPE_MISMATCH)
+                else if (ret == (uint) MsiError.DATATYPE_MISMATCH)
                 {
                     throw new MergeException("Schema difference between the two databases.");
                 }
@@ -439,7 +439,7 @@ namespace IsWiX.WindowsInstaller
             {
                 throw new ArgumentNullException("table");
             }
-            uint ret = NativeMethods.MsiDatabaseIsTablePersistent(this.Id, table);
+            uint ret = MsiApi.MsiDatabaseIsTablePersistent(this.Id, table);
             if (ret == 3)  // MSICONDITION_ERROR
             {
                 throw new InstallerException();
@@ -526,8 +526,8 @@ namespace IsWiX.WindowsInstaller
                     {
                         // Avoid creating unnecessary Record objects by not calling View.Fetch().
                         int recordHandle;
-                        uint ret = NativeMethods.MsiViewFetch(view.Id, out recordHandle);
-                        if (ret == (uint)NativeMethods.Error.NO_MORE_ITEMS)
+                        uint ret = MsiApi.MsiViewFetch(view.Id, out recordHandle);
+                        if (ret == (uint)MsiError.NO_MORE_ITEMS)
                         {
                             break;
                         }
@@ -537,7 +537,7 @@ namespace IsWiX.WindowsInstaller
                             throw InstallerException.ExceptionFromReturnCode(ret);
                         }
 
-                        NativeMethods.MsiCloseHandle(recordHandle);
+                        MsiApi.MsiCloseHandle(recordHandle);
                     }
                 }
             }
@@ -578,7 +578,7 @@ namespace IsWiX.WindowsInstaller
                 this.summaryInfo.Close();
                 this.summaryInfo = null;
             }
-            uint ret = NativeMethods.MsiDatabaseCommit(this.Id);
+            uint ret = MsiApi.MsiDatabaseCommit(this.Id);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -604,10 +604,10 @@ namespace IsWiX.WindowsInstaller
             }
 
             FileInfo file = new FileInfo(exportFilePath);
-            uint ret = NativeMethods.MsiDatabaseExport(this.Id, table, file.DirectoryName, file.Name);
+            uint ret = MsiApi.MsiDatabaseExport(this.Id, table, file.DirectoryName, file.Name);
             if (ret != 0)
             {
-                if (ret == (uint) NativeMethods.Error.BAD_PATHNAME)
+                if (ret == (uint) MsiError.BAD_PATHNAME)
                 {
                     throw new FileNotFoundException(null, exportFilePath);
                 }
@@ -637,10 +637,10 @@ namespace IsWiX.WindowsInstaller
             }
 
             FileInfo file = new FileInfo(importFilePath);
-            uint ret = NativeMethods.MsiDatabaseImport(this.Id, file.DirectoryName, file.Name);
+            uint ret = MsiApi.MsiDatabaseImport(this.Id, file.DirectoryName, file.Name);
             if (ret != 0)
             {
-                if (ret == (uint) NativeMethods.Error.BAD_PATHNAME)
+                if (ret == (uint) MsiError.BAD_PATHNAME)
                 {
                     throw new FileNotFoundException(null, importFilePath);
                 }
@@ -796,7 +796,7 @@ namespace IsWiX.WindowsInstaller
         /// </p></remarks>
         public Record CreateRecord(int fieldCount)
         {
-            int hRecord = NativeMethods.MsiCreateRecord((uint) fieldCount);
+            int hRecord = MsiApi.MsiCreateRecord((uint) fieldCount);
             return new Record(hRecord, true, (View) null);
         }
 
@@ -882,7 +882,7 @@ namespace IsWiX.WindowsInstaller
             }
 
             int hDb;
-            uint ret = NativeMethods.MsiOpenDatabase(filePath, outputPath, out hDb);
+            uint ret = MsiApi.MsiOpenDatabase(filePath, outputPath, out hDb);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -905,7 +905,7 @@ namespace IsWiX.WindowsInstaller
             }
 
             int hDb;
-            uint ret = NativeMethods.MsiOpenDatabase(filePath, (IntPtr) mode, out hDb);
+            uint ret = MsiApi.MsiOpenDatabase(filePath, (IntPtr) mode, out hDb);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(

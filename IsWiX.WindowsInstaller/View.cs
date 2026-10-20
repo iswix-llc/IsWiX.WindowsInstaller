@@ -156,10 +156,10 @@ namespace IsWiX.WindowsInstaller
         [SuppressMessage("Microsoft.Naming", "CA1704:IdentifiersShouldBeSpelledCorrectly", MessageId = "Params"), SuppressMessage("Microsoft.Design", "CA1011:ConsiderPassingBaseTypesAsParameters")]
         public void Execute(Record executeParams)
         {
-            uint ret = NativeMethods.MsiViewExecute(
+            uint ret = MsiApi.MsiViewExecute(
                 this.Id,
                 (executeParams != null ? executeParams.Id : 0));
-            if (ret == (uint) NativeMethods.Error.BAD_QUERY_SYNTAX)
+            if (ret == (uint) MsiError.BAD_QUERY_SYNTAX)
             {
                 throw new BadQuerySyntaxException(this.sql);
             }
@@ -196,8 +196,8 @@ namespace IsWiX.WindowsInstaller
         public Record Fetch()
         {
             int recordHandle;
-            uint ret = NativeMethods.MsiViewFetch(this.Id, out recordHandle);
-            if (ret == (uint) NativeMethods.Error.NO_MORE_ITEMS)
+            uint ret = MsiApi.MsiViewFetch(this.Id, out recordHandle);
+            if (ret == (uint) MsiError.NO_MORE_ITEMS)
             {
                 return null;
             }
@@ -261,7 +261,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("record");
             }
 
-            uint ret = NativeMethods.MsiViewModify(this.Id, (int) mode, record.Id);
+            uint ret = MsiApi.MsiViewModify(this.Id, (int) mode, record.Id);
             if (mode == ViewModifyMode.Insert || mode == ViewModifyMode.InsertTemporary)
             {
                 record.IsFormatStringInvalid = true;
@@ -418,9 +418,9 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("record");
             }
 
-            uint ret = NativeMethods.MsiViewModify(this.Id, (int) ViewModifyMode.Seek, record.Id);
+            uint ret = MsiApi.MsiViewModify(this.Id, (int) ViewModifyMode.Seek, record.Id);
             record.IsFormatStringInvalid = true;
-            if (ret == (uint) NativeMethods.Error.FUNCTION_FAILED)
+            if (ret == (uint) MsiError.FUNCTION_FAILED)
             {
                 return false;
             }
@@ -457,8 +457,8 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("record");
             }
 
-            uint ret = NativeMethods.MsiViewModify(this.Id, (int) ViewModifyMode.Merge, record.Id);
-            if (ret == (uint) NativeMethods.Error.FUNCTION_FAILED)
+            uint ret = MsiApi.MsiViewModify(this.Id, (int) ViewModifyMode.Merge, record.Id);
+            if (ret == (uint) MsiError.FUNCTION_FAILED)
             {
                 return false;
             }
@@ -565,24 +565,24 @@ namespace IsWiX.WindowsInstaller
 
         private ICollection<ValidationErrorInfo> InternalValidate(ViewModifyMode mode, Record record)
         {
-            uint ret = NativeMethods.MsiViewModify(this.Id, (int) mode, record.Id);
-            if (ret == (uint) NativeMethods.Error.INVALID_DATA)
+            uint ret = MsiApi.MsiViewModify(this.Id, (int) mode, record.Id);
+            if (ret == (uint) MsiError.INVALID_DATA)
             {
                 ICollection<ValidationErrorInfo> errorInfo = new List<ValidationErrorInfo>();
                 while (true)
                 {
                     uint bufSize = 40;
                     StringBuilder column = new StringBuilder("", (int) bufSize);
-                    int error = NativeMethods.MsiViewGetError(this.Id, column, ref bufSize);
+                    int error = MsiApi.MsiViewGetError(this.Id, column, ref bufSize);
                     if (error == -2 /*MSIDBERROR_MOREDATA*/)
                     {
                         column.Capacity = (int) ++bufSize;
-                        error = NativeMethods.MsiViewGetError(this.Id, column, ref bufSize);
+                        error = MsiApi.MsiViewGetError(this.Id, column, ref bufSize);
                     }
                     
                     if (error == -3 /*MSIDBERROR_INVALIDARG*/)
                     {
-                        throw InstallerException.ExceptionFromReturnCode((uint) NativeMethods.Error.INVALID_PARAMETER);
+                        throw InstallerException.ExceptionFromReturnCode((uint) MsiError.INVALID_PARAMETER);
                     }
                     else if (error == 0 /*MSIDBERROR_NOERROR*/)
                     {

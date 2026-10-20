@@ -50,7 +50,7 @@ namespace IsWiX.WindowsInstaller
         /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msicreaterecord.asp">MsiCreateRecord</a>
         /// </p></remarks>
         public Record(int fieldCount)
-            : this(NativeMethods.MsiCreateRecord((uint) fieldCount), true, (View) null)
+            : this(MsiApi.MsiCreateRecord((uint) fieldCount), true, (View) null)
         {
         }
 
@@ -92,7 +92,7 @@ namespace IsWiX.WindowsInstaller
         {
             get
             {
-                return (int) NativeMethods.MsiRecordGetFieldCount(this.Id);
+                return (int) MsiApi.MsiRecordGetFieldCount(this.Id);
             }
         }
 
@@ -255,7 +255,7 @@ namespace IsWiX.WindowsInstaller
         /// </p></remarks>
         public void Clear()
         {
-            uint ret = NativeMethods.MsiRecordClearData(this.Id);
+            uint ret = MsiApi.MsiRecordClearData(this.Id);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -276,7 +276,7 @@ namespace IsWiX.WindowsInstaller
         public bool IsNull(int field)
         {
             this.CheckRange(field);
-            return NativeMethods.MsiRecordIsNull(this.Id, (uint) field);
+            return MsiApi.MsiRecordIsNull(this.Id, (uint) field);
         }
 
         /// <summary>
@@ -315,7 +315,7 @@ namespace IsWiX.WindowsInstaller
         public int GetDataSize(int field)
         {
             this.CheckRange(field);
-            return (int) NativeMethods.MsiRecordDataSize(this.Id, (uint) field);
+            return (int) MsiApi.MsiRecordDataSize(this.Id, (uint) field);
         }
 
         /// <summary>
@@ -358,7 +358,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            int value = NativeMethods.MsiRecordGetInteger(this.Id, (uint) field);
+            int value = MsiApi.MsiRecordGetInteger(this.Id, (uint) field);
             if (value == Int32.MinValue)  // MSI_NULL_INTEGER
             {
                 return 0;
@@ -397,7 +397,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            int value = NativeMethods.MsiRecordGetInteger(this.Id, (uint) field);
+            int value = MsiApi.MsiRecordGetInteger(this.Id, (uint) field);
             if (value == Int32.MinValue)  // MSI_NULL_INTEGER
             {
                 return null;
@@ -435,7 +435,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            uint ret = NativeMethods.MsiRecordSetInteger(this.Id, (uint) field, value);
+            uint ret = MsiApi.MsiRecordSetInteger(this.Id, (uint) field, value);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -472,7 +472,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            uint ret = NativeMethods.MsiRecordSetInteger(
+            uint ret = MsiApi.MsiRecordSetInteger(
                 this.Id,
                 (uint) field,
                 value.HasValue ? (int) value : Int32.MinValue);
@@ -513,11 +513,11 @@ namespace IsWiX.WindowsInstaller
 
             StringBuilder buf = new StringBuilder(String.Empty);
             uint bufSize = 0;
-            uint ret = NativeMethods.MsiRecordGetString(this.Id, (uint) field, buf, ref bufSize);
-            if (ret == (uint) NativeMethods.Error.MORE_DATA)
+            uint ret = MsiApi.MsiRecordGetString(this.Id, (uint) field, buf, ref bufSize);
+            if (ret == (uint) MsiError.MORE_DATA)
             {
                 buf.Capacity = (int) ++bufSize;
-                ret = NativeMethods.MsiRecordGetString(this.Id, (uint) field, buf, ref bufSize);
+                ret = MsiApi.MsiRecordGetString(this.Id, (uint) field, buf, ref bufSize);
             }
             if (ret != 0)
             {
@@ -559,7 +559,7 @@ namespace IsWiX.WindowsInstaller
                 value = String.Empty;
             }
 
-            uint ret = NativeMethods.MsiRecordSetString(this.Id, (uint) field, value);
+            uint ret = MsiApi.MsiRecordSetString(this.Id, (uint) field, value);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -744,7 +744,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("filePath");
             }
 
-            uint ret = NativeMethods.MsiRecordSetStream(this.Id, (uint) field, filePath);
+            uint ret = MsiApi.MsiRecordSetStream(this.Id, (uint) field, filePath);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -792,7 +792,7 @@ namespace IsWiX.WindowsInstaller
 
             if (stream == null)
             {
-                uint ret = NativeMethods.MsiRecordSetStream(this.Id, (uint) field, null);
+                uint ret = MsiApi.MsiRecordSetStream(this.Id, (uint) field, null);
                 if (ret != 0)
                 {
                     throw InstallerException.ExceptionFromReturnCode(ret);
@@ -814,7 +814,7 @@ namespace IsWiX.WindowsInstaller
                     writeStream.Close();
                     writeStream = null;
 
-                    uint ret = NativeMethods.MsiRecordSetStream(this.Id, (uint) field, tempPath);
+                    uint ret = MsiApi.MsiRecordSetStream(this.Id, (uint) field, tempPath);
                     if (ret != 0)
                     {
                         throw InstallerException.ExceptionFromReturnCode(ret);
@@ -900,12 +900,12 @@ namespace IsWiX.WindowsInstaller
             int sessionHandle = session != null ? session.Id : 0;
             StringBuilder buf = new StringBuilder(String.Empty);
             uint bufSize = 1;
-            uint ret = NativeMethods.MsiFormatRecord(sessionHandle, this.Id, buf, ref bufSize);
-            if (ret == (uint) NativeMethods.Error.MORE_DATA)
+            uint ret = MsiApi.MsiFormatRecord(sessionHandle, this.Id, buf, ref bufSize);
+            if (ret == (uint) MsiError.MORE_DATA)
             {
                 bufSize++;
                 buf = new StringBuilder((int) bufSize);
-                ret = NativeMethods.MsiFormatRecord(sessionHandle, this.Id, buf, ref bufSize);
+                ret = MsiApi.MsiFormatRecord(sessionHandle, this.Id, buf, ref bufSize);
             }
             if (ret != 0)
             {
@@ -976,8 +976,8 @@ namespace IsWiX.WindowsInstaller
         private static void ExtractSubStorage(string databaseFile, string storageName, string extractFile)
         {
             IStorage storage;
-            NativeMethods.STGM openMode = NativeMethods.STGM.READ | NativeMethods.STGM.SHARE_DENY_WRITE;
-            int hr = NativeMethods.StgOpenStorage(databaseFile, IntPtr.Zero, (uint) openMode, IntPtr.Zero, 0, out storage);
+            MsiApi.STGM openMode = MsiApi.STGM.READ | MsiApi.STGM.SHARE_DENY_WRITE;
+            int hr = MsiApi.StgOpenStorage(databaseFile, IntPtr.Zero, (uint) openMode, IntPtr.Zero, 0, out storage);
             if (hr != 0)
             {
                 Marshal.ThrowExceptionForHR(hr);
@@ -985,14 +985,14 @@ namespace IsWiX.WindowsInstaller
 
             try
             {
-                openMode = NativeMethods.STGM.READ | NativeMethods.STGM.SHARE_EXCLUSIVE;
+                openMode = MsiApi.STGM.READ | MsiApi.STGM.SHARE_EXCLUSIVE;
                 IStorage subStorage = storage.OpenStorage(storageName, IntPtr.Zero, (uint) openMode, IntPtr.Zero, 0);
 
                 try
                 {
                     IStorage newStorage;
-                    openMode = NativeMethods.STGM.CREATE | NativeMethods.STGM.READWRITE | NativeMethods.STGM.SHARE_EXCLUSIVE;
-                    hr = NativeMethods.StgCreateDocfile(extractFile, (uint) openMode, 0, out newStorage);
+                    openMode = MsiApi.STGM.CREATE | MsiApi.STGM.READWRITE | MsiApi.STGM.SHARE_EXCLUSIVE;
+                    hr = MsiApi.StgCreateDocfile(extractFile, (uint) openMode, 0, out newStorage);
                     if (hr != 0)
                     {
                         Marshal.ThrowExceptionForHR(hr);

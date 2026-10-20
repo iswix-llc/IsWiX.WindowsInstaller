@@ -425,7 +425,7 @@ namespace IsWiX.WindowsInstaller
                 int intValue;
                 long timeValue = 0;
 
-                uint ret = NativeMethods.MsiSummaryInfoGetProperty(
+                uint ret = MsiApi.MsiSummaryInfoGetProperty(
                     this.Id,
                     property,
                     out dataType,
@@ -462,10 +462,10 @@ namespace IsWiX.WindowsInstaller
 
                     case VarEnum.VT_LPSTR:
                     {
-                        if (ret == (uint) NativeMethods.Error.MORE_DATA)
+                        if (ret == (uint) MsiError.MORE_DATA)
                         {
                             stringValue.Capacity = (int) ++bufSize;
-                            ret = NativeMethods.MsiSummaryInfoGetProperty(
+                            ret = MsiApi.MsiSummaryInfoGetProperty(
                                 this.Id,
                                 property,
                                 out dataType,
@@ -545,7 +545,7 @@ namespace IsWiX.WindowsInstaller
                     timeValue = ((DateTime) value).ToFileTime();
                 }
 
-                uint ret = NativeMethods.MsiSummaryInfoSetProperty(
+                uint ret = MsiApi.MsiSummaryInfoSetProperty(
                     this.Id,
                     property,
                     dataType,
@@ -578,7 +578,7 @@ namespace IsWiX.WindowsInstaller
         /// </p></remarks>
         public void Persist()
         {
-            uint ret = NativeMethods.MsiSummaryInfoPersist(this.Id);
+            uint ret = MsiApi.MsiSummaryInfoPersist(this.Id);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -589,15 +589,15 @@ namespace IsWiX.WindowsInstaller
         {
             int summaryInfoHandle;
             int maxProperties = !enableWrite ? 0 : SummaryInfo.MAX_PROPERTIES;
-            uint ret = NativeMethods.MsiGetSummaryInformation(
+            uint ret = MsiApi.MsiGetSummaryInformation(
                 0,
                 packagePath,
                 (uint) maxProperties,
                 out summaryInfoHandle);
             if (ret != 0)
             {
-                if (ret == (uint) NativeMethods.Error.FILE_NOT_FOUND ||
-                    ret == (uint) NativeMethods.Error.ACCESS_DENIED)
+                if (ret == (uint) MsiError.FILE_NOT_FOUND ||
+                    ret == (uint) MsiError.ACCESS_DENIED)
                 {
                     throw new FileNotFoundException(null, packagePath);
                 }

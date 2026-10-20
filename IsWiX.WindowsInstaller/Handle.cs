@@ -139,7 +139,7 @@ namespace IsWiX.WindowsInstaller
 
             if (disposing && this.ownsHandle)
             {
-                NativeMethods.MsiCloseHandle(this.id);
+                MsiApi.MsiCloseHandle(this.id);
             }
         }
     }

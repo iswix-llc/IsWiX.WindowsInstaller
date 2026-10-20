@@ -20,7 +20,7 @@ namespace IsWiX.WindowsInstaller
     {
         public static MsiErrorException Syntax()
         {
-            return new MsiErrorException((uint) NativeMethods.Error.BAD_QUERY_SYNTAX);
+            return new MsiErrorException((uint) MsiError.BAD_QUERY_SYNTAX);
         }
     }
 
@@ -368,7 +368,7 @@ namespace IsWiX.WindowsInstaller
             if (this.IsKeyword("HOLD") || this.IsKeyword("FREE"))
             {
                 // HOLD and FREE manage temporary columns, which are not supported.
-                throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
             }
             this.ExpectKeyword("ADD");
             var alter = new SqlAlterTableAdd { Table = table, Column = this.ParseColumnDefinition() };
@@ -427,7 +427,7 @@ namespace IsWiX.WindowsInstaller
                 }
                 else if (this.IsKeyword("TEMPORARY"))
                 {
-                    throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                    throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
                 }
                 else
                 {
@@ -832,7 +832,7 @@ namespace IsWiX.WindowsInstaller
         /// <summary>The columns the query returns, known from the statement before it is executed.</summary>
         public IReadOnlyList<SqlColumn> OutputColumns => this.outputColumns;
 
-        public static BoundSelect Bind(SqlSelect select, ManagedDatabase database)
+        public static BoundSelect Bind(SqlSelect select, EngineDatabase database)
         {
             var tables = new List<SqlTable>();
             foreach (string name in select.Tables)
@@ -900,7 +900,7 @@ namespace IsWiX.WindowsInstaller
         {
             if (markers.Length < this.MarkerCount)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_PARAMETER);
+                throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
             }
             object?[] parameters = markers.Take(this.MarkerCount).ToArray();
 
@@ -1046,7 +1046,7 @@ namespace IsWiX.WindowsInstaller
                 }
                 return Holds(op, string.CompareOrdinal(s, t));
             }
-            throw new MsiErrorException((uint) NativeMethods.Error.DATATYPE_MISMATCH);
+            throw new MsiErrorException((uint) MsiError.DATATYPE_MISMATCH);
         }
 
         /// <summary>Orders values for ORDER BY: nulls first, then integers and strings.</summary>
