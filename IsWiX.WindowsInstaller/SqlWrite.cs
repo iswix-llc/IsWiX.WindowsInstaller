@@ -8,6 +8,25 @@ namespace IsWiX.WindowsInstaller
     using System.Linq;
     using MsiReader;
 
+    /// <summary>
+    /// A binary cell of a table loaded from a file. Its bytes are read only when a query, a commit or an export
+    /// needs them, so a table with large streams does not hold all of them in memory.
+    /// </summary>
+    internal sealed class LazyBinary
+    {
+        private readonly Func<byte[]?> read;
+
+        public LazyBinary(Func<byte[]?> read)
+        {
+            this.read = read;
+        }
+
+        public byte[]? Read() => this.read();
+
+        /// <summary>The bytes of a lazy cell; any other value is returned as it is.</summary>
+        public static object? Resolve(object? value) => value is LazyBinary lazy ? lazy.Read() : value;
+    }
+
     /// <summary>A table whose rows can be changed. Rows hold one value per column: a string, an int, a byte[] or null.</summary>
     internal sealed class MutableTable
     {
@@ -187,7 +206,7 @@ namespace IsWiX.WindowsInstaller
                         }
                         break;
                     case MsiColumnType.Binary:
-                        if (value is not byte[])
+                        if (value is not (byte[] or LazyBinary))
                         {
                             throw Mismatch();
                         }
@@ -557,7 +576,7 @@ namespace IsWiX.WindowsInstaller
             var result = new object?[positions.Length];
             for (int j = 0; j < positions.Length; j++)
             {
-                result[j] = stored[positions[j]];
+                result[j] = LazyBinary.Resolve(stored[positions[j]]);
             }
             return result;
         }
@@ -585,6 +604,8 @@ namespace IsWiX.WindowsInstaller
 
         private static bool SameValue(object? a, object? b)
         {
+            a = LazyBinary.Resolve(a);
+            b = LazyBinary.Resolve(b);
             if (a is byte[] left && b is byte[] right)
             {
                 return left.AsSpan().SequenceEqual(right);

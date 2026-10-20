@@ -51,8 +51,10 @@ public sealed class MsiRow
 
     public byte[]? GetBinary(string column) => GetBinary(Table.GetColumn(column));
 
-    private byte[]? GetBinary(MsiColumn col)
+    /// <summary>The name of the stream holding a binary cell, or null when a primary-key value is null.</summary>
+    public string? BinaryStreamName(string column)
     {
+        var col = Table.GetColumn(column);
         if (col.Type != MsiColumnType.Binary)
             throw new InvalidOperationException($"Column '{col}' is not a binary column.");
 
@@ -65,7 +67,13 @@ public sealed class MsiRow
                 return null;
             parts.Add(v is int i ? i.ToString(CultureInfo.InvariantCulture) : (string)v);
         }
-        return Table.Database.ReadStream(string.Join(".", parts));
+        return string.Join(".", parts);
+    }
+
+    private byte[]? GetBinary(MsiColumn col)
+    {
+        string? name = BinaryStreamName(col.Name);
+        return name is null ? null : Table.Database.ReadStream(name);
     }
 
     public override string ToString() => $"{Table.Name}[{Index}]";

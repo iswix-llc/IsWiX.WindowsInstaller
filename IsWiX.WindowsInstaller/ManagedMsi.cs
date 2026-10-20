@@ -261,7 +261,7 @@ namespace IsWiX.WindowsInstaller
                         if (streamName != null)
                         {
                             binaryNames.Add(streamName);
-                            if (row[i] is byte[] data)
+                            if (LazyBinary.Resolve(row[i]) is byte[] data)
                             {
                                 streams[streamName] = data;
                             }
@@ -326,6 +326,11 @@ namespace IsWiX.WindowsInstaller
 
             this.reader = MsiDatabase.Open(this.path);
             this.pendingStreams.Clear();
+            // The file now holds every change, so later reads come from it rather than from the cache.
+            this.tables.Clear();
+            this.addedTables.Clear();
+            this.removedTables.Clear();
+            this.alteredTables.Clear();
             this.dirty = false;
         }
 
@@ -1060,7 +1065,7 @@ namespace IsWiX.WindowsInstaller
         /// </summary>
         private static string WriteBinaryCell(SqlTable table, object?[] row, int column, string folder)
         {
-            if (row[column] is not byte[] data)
+            if (LazyBinary.Resolve(row[column]) is not byte[] data)
             {
                 return string.Empty;
             }
@@ -1102,7 +1107,7 @@ namespace IsWiX.WindowsInstaller
             return name == "_Tables" || name == "_Columns" || name == "_Streams";
         }
 
-        private static MutableTable FromMsi(MsiTable table)
+        private MutableTable FromMsi(MsiTable table)
         {
             var columns = new List<SqlColumn>();
             foreach (MsiColumn column in table.Columns)
@@ -1117,7 +1122,18 @@ namespace IsWiX.WindowsInstaller
                 var values = new object?[columns.Count];
                 for (int i = 0; i < columns.Count; i++)
                 {
-                    values[i] = row[columns[i].Name];
+                    if (columns[i].Type == MsiColumnType.Binary)
+                    {
+                        // The bytes stay in the file until something needs them.
+                        string? streamName = row.BinaryStreamName(columns[i].Name);
+                        values[i] = streamName != null && this.reader.HasStream(streamName)
+                            ? new LazyBinary(() => this.ReadPlainStream(streamName))
+                            : null;
+                    }
+                    else
+                    {
+                        values[i] = row[columns[i].Name];
+                    }
                 }
                 rows.Add(values);
             }
@@ -1180,7 +1196,7 @@ namespace IsWiX.WindowsInstaller
             var rows = new List<object?[]>();
             foreach (string name in this.reader.StreamNames)
             {
-                rows.Add(new object?[] { name, this.reader.ReadStream(name) });
+                rows.Add(new object?[] { name, new LazyBinary(() => this.ReadPlainStream(name)) });
             }
             return new SqlTable("_Streams", columns, rows);
         }

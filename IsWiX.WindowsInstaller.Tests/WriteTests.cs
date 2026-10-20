@@ -370,4 +370,42 @@ public class WriteTests : IDisposable
         Assert.Null(reader.ReadStream("Binary.hello"));
         Assert.Equal(0, reader.GetTable("Binary").Rows.Count);
     }
+
+    [Fact]
+    public void BinaryReadsStillWorkAfterASecondCommit()
+    {
+        string path = CopyOfFixture();
+        byte[] first = { 1, 1, 2, 3 };
+        byte[] second = { 5, 8, 13 };
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            using (View insert = db.OpenView("INSERT INTO `Binary` (`Name`, `Data`) VALUES (?, ?)"))
+            using (var record = new Record("first", null))
+            {
+                record.SetStream(2, new MemoryStream(first));
+                insert.Execute(record);
+            }
+            db.Commit();
+
+            using (View insert = db.OpenView("INSERT INTO `Binary` (`Name`, `Data`) VALUES (?, ?)"))
+            using (var record = new Record("second", null))
+            {
+                record.SetStream(2, new MemoryStream(second));
+                insert.Execute(record);
+            }
+            db.Commit();
+
+            using View select = db.OpenView("SELECT `Data` FROM `Binary` WHERE `Name` = 'first'");
+            select.Execute();
+            using Record? row = select.Fetch();
+            Assert.NotNull(row);
+            using var buffer = new MemoryStream();
+            row!.GetStream(1).CopyTo(buffer);
+            Assert.True(buffer.ToArray().AsSpan().SequenceEqual(first));
+        }
+
+        using var reader = MsiDatabase.Open(path);
+        Assert.True(reader.ReadStream("Binary.first")!.AsSpan().SequenceEqual(first));
+        Assert.True(reader.ReadStream("Binary.second")!.AsSpan().SequenceEqual(second));
+    }
 }

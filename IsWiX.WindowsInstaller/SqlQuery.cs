@@ -924,7 +924,11 @@ namespace IsWiX.WindowsInstaller
             if (this.projection != null)
             {
                 int[] columns = this.projection;
-                output = matched.Select(row => columns.Select(offset => row[offset]).ToArray());
+                output = matched.Select(row => columns.Select(offset => LazyBinary.Resolve(row[offset])).ToArray());
+            }
+            else
+            {
+                output = matched.Select(row => row.Select(LazyBinary.Resolve).ToArray());
             }
             if (this.distinct)
             {
@@ -1026,7 +1030,7 @@ namespace IsWiX.WindowsInstaller
             {
                 return false;
             }
-            if (left is byte[] || right is byte[])
+            if (left is byte[] || right is byte[] || left is LazyBinary || right is LazyBinary)
             {
                 throw SqlErrors.Syntax();
             }
@@ -1065,6 +1069,8 @@ namespace IsWiX.WindowsInstaller
 
         public static bool ValueEquals(object? left, object? right)
         {
+            left = LazyBinary.Resolve(left);
+            right = LazyBinary.Resolve(right);
             if (left == null || right == null)
             {
                 return left == null && right == null;
@@ -1078,6 +1084,7 @@ namespace IsWiX.WindowsInstaller
 
         public static int ValueHash(object? value)
         {
+            value = LazyBinary.Resolve(value);
             return value switch
             {
                 null => 0,
