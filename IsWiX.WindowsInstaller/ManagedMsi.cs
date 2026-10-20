@@ -91,6 +91,7 @@ namespace IsWiX.WindowsInstaller
         private readonly Dictionary<string, byte[]> pendingStreams = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         private MsiDatabase reader;
         private bool dirty;
+        private readonly List<string> addedTables = new List<string>();
 
         private ManagedDatabase(MsiDatabase reader, string path, DatabaseMode mode)
         {
@@ -140,7 +141,9 @@ namespace IsWiX.WindowsInstaller
 
         public bool ContainsTable(string name)
         {
-            return this.reader.ContainsTable(name) || IsSystemTable(name);
+            return this.reader.ContainsTable(name)
+                || this.addedTables.Any(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase))
+                || IsSystemTable(name);
         }
 
         /// <summary>Finds a table by name, including the system tables _Tables, _Columns and _Streams.</summary>
@@ -223,7 +226,7 @@ namespace IsWiX.WindowsInstaller
             var streams = new Dictionary<string, byte[]>(StringComparer.Ordinal);
             var binaryNames = new HashSet<string>(StringComparer.Ordinal);
             var binaryTables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (string name in this.reader.TableNames)
+            foreach (string name in this.AllTableNames())
             {
                 MutableTable table = this.GetUserTable(name) ?? throw MutableTable.Failed();
                 if (table.Columns.Any(c => c.Type == MsiColumnType.Binary))
@@ -341,7 +344,7 @@ namespace IsWiX.WindowsInstaller
         /// only the database code page, and Database.CodePage reads it from the third line.
         /// </summary>
         /// <summary>
-        /// Applies a transform to the database. Each table stream is read and checked before any change is made,
+        /// Applies a transform to the database. The transform is checked in full before any change is made,
         /// so a transform in an unsupported layout leaves the database as it was.
         /// </summary>
         public void ApplyTransform(string transformPath)
@@ -363,10 +366,22 @@ namespace IsWiX.WindowsInstaller
 
             using (transform)
             {
+                Dictionary<string, MutableTable> newTables = PlanNewTables(transform);
                 var changes = new List<Action>();
+                foreach (MutableTable newTable in newTables.Values)
+                {
+                    MutableTable toAdd = newTable;
+                    changes.Add(() => this.AddTable(toAdd));
+                }
+
                 foreach (KeyValuePair<string, byte[]> stream in transform.Tables)
                 {
+                    if (stream.Key == "_Tables" || stream.Key == "_Columns")
+                    {
+                        continue;
+                    }
                     MutableTable table = this.GetUserTable(stream.Key)
+                        ?? (newTables.TryGetValue(stream.Key, out MutableTable? defined) ? defined : null)
                         ?? throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
                     changes.AddRange(PlanRows(table, stream.Value, transform));
                 }
@@ -377,6 +392,119 @@ namespace IsWiX.WindowsInstaller
                 }
                 this.Changed();
             }
+        }
+
+        /// <summary>
+        /// Reads the tables a transform defines, from its _Tables and _Columns streams. A table row is 2 words:
+        /// the header 0x0101 and the table name. A column row is 5 words: the header 0x0401, the table name,
+        /// the column number, the column name and the type word. Columns are kept in the order they appear.
+        /// Other layouts are rejected.
+        /// </summary>
+        private Dictionary<string, MutableTable> PlanNewTables(MsiTransform transform)
+        {
+            var result = new Dictionary<string, MutableTable>(StringComparer.OrdinalIgnoreCase);
+            byte[]? tablesStream = StreamNamed(transform, "_Tables");
+            byte[]? columnsStream = StreamNamed(transform, "_Columns");
+            if (tablesStream == null && columnsStream == null)
+            {
+                return result;
+            }
+            if (tablesStream == null || columnsStream == null || tablesStream.Length % 4 != 0 || columnsStream.Length % 10 != 0)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+            }
+
+            var names = new List<string>();
+            for (int position = 0; position < tablesStream.Length; position += 4)
+            {
+                if (ReadWord(tablesStream, position) != 0x0101)
+                {
+                    throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                }
+                string name = transform.GetString((uint) ReadWord(tablesStream, position + 2))
+                    ?? throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                if (this.ContainsTable(name) || names.Contains(name, StringComparer.OrdinalIgnoreCase))
+                {
+                    throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                }
+                names.Add(name);
+            }
+
+            var columns = names.ToDictionary(n => n, _ => new List<SqlColumn>(), StringComparer.OrdinalIgnoreCase);
+            for (int position = 0; position < columnsStream.Length; position += 10)
+            {
+                if (ReadWord(columnsStream, position) != 0x0401)
+                {
+                    throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                }
+                string tableName = transform.GetString((uint) ReadWord(columnsStream, position + 2))
+                    ?? throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                string columnName = transform.GetString((uint) ReadWord(columnsStream, position + 6))
+                    ?? throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                if (!columns.TryGetValue(tableName, out List<SqlColumn>? list))
+                {
+                    throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                }
+
+                // Bit 0x8000 marks a column the transform adds. Only string columns are supported.
+                int type = ReadWord(columnsStream, position + 8) & 0x7FFF;
+                if ((type & 0x0800) == 0)
+                {
+                    throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                }
+                list.Add(new SqlColumn(tableName, columnName, MsiColumnType.String, type & 0xFF,
+                    (type & 0x1000) != 0, (type & 0x2000) != 0, (type & 0x0200) != 0));
+            }
+
+            foreach (string name in names)
+            {
+                List<SqlColumn> list = columns[name];
+                if (list.Count == 0 || !list.Any(c => c.IsPrimaryKey))
+                {
+                    throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                }
+                result[name] = new MutableTable(name, list, new List<object?[]>());
+            }
+            return result;
+        }
+
+        /// <summary>Adds a table defined by a transform. Runs only after the whole transform has been checked.</summary>
+        private void AddTable(MutableTable table)
+        {
+            if (this.ContainsTable(table.Name))
+            {
+                throw MutableTable.Failed();
+            }
+            this.tables[table.Name] = table;
+            this.addedTables.Add(table.Name);
+        }
+
+        /// <summary>The tables in the database: those read from the file, then those a transform added.</summary>
+        private IEnumerable<string> AllTableNames()
+        {
+            return this.reader.TableNames.Concat(this.addedTables);
+        }
+
+        /// <summary>The column type word as the _Columns table stores it.</summary>
+        private static int RawTypeOf(SqlColumn column)
+        {
+            int raw = 0x0100 | (column.Type == MsiColumnType.String ? 0x0C00 : 0) | (column.Size & 0xFF);
+            if (column.IsLocalizable) raw |= 0x0200;
+            if (column.IsNullable) raw |= 0x1000;
+            if (column.IsPrimaryKey) raw |= 0x2000;
+            return raw;
+        }
+
+        private static byte[]? StreamNamed(MsiTransform transform, string name)
+        {
+            foreach (KeyValuePair<string, byte[]> stream in transform.Tables)
+            {
+                if (stream.Key == name)
+                {
+                    return stream.Value;
+                }
+            }
+            return null;
         }
 
         /// <summary>
@@ -552,7 +680,7 @@ namespace IsWiX.WindowsInstaller
                 new SqlColumn("_Tables", "Name", MsiColumnType.String, 62, false, true, false),
             };
             var rows = new List<object?[]>();
-            foreach (string name in this.reader.TableNames)
+            foreach (string name in this.AllTableNames())
             {
                 rows.Add(new object?[] { name });
             }
@@ -569,8 +697,18 @@ namespace IsWiX.WindowsInstaller
                 new SqlColumn("_Columns", "Type", MsiColumnType.Integer, 2, false, false, false),
             };
             var rows = new List<object?[]>();
-            foreach (string tableName in this.reader.TableNames)
+            foreach (string tableName in this.AllTableNames())
             {
+                if (this.addedTables.Contains(tableName))
+                {
+                    MutableTable added = this.GetUserTable(tableName) ?? throw MutableTable.Failed();
+                    for (int i = 0; i < added.Columns.Count; i++)
+                    {
+                        SqlColumn column = added.Columns[i];
+                        rows.Add(new object?[] { added.Name, i + 1, column.Name, RawTypeOf(column) });
+                    }
+                    continue;
+                }
                 MsiTable table = this.reader.GetTable(tableName);
                 foreach (MsiColumn column in table.Columns)
                 {

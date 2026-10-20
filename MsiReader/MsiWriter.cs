@@ -206,7 +206,7 @@ public static class MsiWriter
         switch (column.Type)
         {
             case MsiColumnType.String:
-                return 0x0800 | flags | (column.Size & 0xFF);
+                return 0x0800 | 0x0400 | flags | (column.Size & 0xFF);
             case MsiColumnType.Binary:
                 return 0x0900 | 0x0100 | (column.IsNullable ? 0x1000 : 0);
             default:

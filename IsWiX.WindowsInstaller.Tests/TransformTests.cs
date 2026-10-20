@@ -104,6 +104,27 @@ public class TransformTests : IDisposable
     }
 
     [Fact]
+    public void NewTableTransformAddsTableWithRowLikeWindows()
+    {
+        string path = CopyOfBase();
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            db.ApplyTransform(TestFixtures.Path("test-newtable.mst"));
+            db.Commit();
+        }
+
+        using var check = new Database(path);
+        using View view = check.OpenView("SELECT `Key`, `Value` FROM `MyProperties`");
+        view.Execute();
+        var rows = new List<string>();
+        for (Record? row = view.Fetch(); row != null; row = view.Fetch())
+        {
+            rows.Add(row.GetString(1) + "\t" + row.GetString(2));
+        }
+        Assert.Equal(new List<string> { "Meaning\t42" }, rows);
+    }
+
+    [Fact]
     public void TransformOnReadOnlyDatabaseFails()
     {
         using var db = new Database(CopyOfBase());
