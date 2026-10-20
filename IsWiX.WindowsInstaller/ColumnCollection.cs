@@ -298,7 +298,7 @@ namespace IsWiX.WindowsInstaller
         private static IList<string> GetViewColumns(View view, bool types)
         {
             int typesFlag = types ? 1 : 0;
-            int recordHandle = MsiApi.MsiViewGetColumnInfo(view.Id, (uint) typesFlag);
+            int recordHandle = MsiApi.MsiViewGetColumnInfo(view, (uint) typesFlag);
 
             using (Record rec = new Record(recordHandle, true, null))
             {

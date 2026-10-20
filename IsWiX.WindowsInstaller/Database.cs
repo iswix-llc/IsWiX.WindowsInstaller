@@ -540,7 +540,7 @@ namespace IsWiX.WindowsInstaller
                     for (count = 0; ; count++)
                     {
                         // Avoid creating unnecessary Record objects by not calling View.Fetch().
-                        int? recordHandle = MsiApi.MsiViewFetch(view.Id);
+                        int? recordHandle = MsiApi.MsiViewFetch(view);
                         if (recordHandle == null)
                         {
                             break;

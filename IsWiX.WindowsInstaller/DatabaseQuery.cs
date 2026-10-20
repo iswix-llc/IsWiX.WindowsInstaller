@@ -35,9 +35,8 @@ namespace IsWiX.WindowsInstaller
 
             string sql = (args == null || args.Length == 0 ? sqlFormat :
                 String.Format(CultureInfo.InvariantCulture, sqlFormat, args));
-            int viewHandle = MsiApi.MsiDatabaseOpenView(this, sql);
 
-            return new View(viewHandle, sql, this);
+            return MsiApi.MsiDatabaseOpenView(this, sql);
         }
 
         /// <summary>

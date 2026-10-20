@@ -127,7 +127,7 @@ namespace IsWiX.WindowsInstaller
             return 0; // MSIDBSTATE_READ
         }
 
-        internal static int MsiDatabaseOpenView(Database database, string szQuery)
+        internal static View MsiDatabaseOpenView(Database database, string szQuery)
         {
             return Guard(() =>
             {
@@ -137,13 +137,12 @@ namespace IsWiX.WindowsInstaller
                     throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
                 }
                 SqlStatement statement = new SqlParser(szQuery).ParseStatement();
-                EngineView view = statement switch
+                return statement switch
                 {
-                    SqlSelect select => new EngineView(database, BoundSelect.Bind(select, database)),
-                    SqlCreateTable or SqlDropTable or SqlAlterTableAdd => new EngineView(database, BoundDdl.Bind(statement, database)),
-                    _ => new EngineView(database, BoundWrite.Bind(statement, database)),
+                    SqlSelect select => new View(database, szQuery, BoundSelect.Bind(select, database)),
+                    SqlCreateTable or SqlDropTable or SqlAlterTableAdd => new View(database, szQuery, BoundDdl.Bind(statement, database)),
+                    _ => new View(database, szQuery, BoundWrite.Bind(statement, database)),
                 };
-                return HandleTable.Add(view);
             });
         }
 
@@ -229,33 +228,34 @@ namespace IsWiX.WindowsInstaller
             });
         }
 
-        internal static void MsiViewExecute(int hView, int hRecord)
+        internal static void MsiViewExecute(View view, int hRecord)
         {
             Guard(() =>
             {
-                EngineView view = HandleTable.Get<EngineView>(hView);
+                view.ThrowIfClosed();
                 object?[] markers = hRecord == 0
                     ? Array.Empty<object?>()
                     : HandleTable.Get<EngineRecord>(hRecord).Values();
-                view.Execute(markers);
+                view.RunStatement(markers);
             });
         }
 
         /// <summary>Fetches the next record, returning its handle, or null when the view has no more records.</summary>
-        internal static int? MsiViewFetch(int hView)
+        internal static int? MsiViewFetch(View view)
         {
             return Guard(() =>
             {
-                EngineRecord? record = HandleTable.Get<EngineView>(hView).Fetch();
+                view.ThrowIfClosed();
+                EngineRecord? record = view.NextRow();
                 return record == null ? (int?) null : HandleTable.Add(record);
             });
         }
 
-        internal static ModifyOutcome MsiViewModify(int hView, int iModifyMode, int hRecord)
+        internal static ModifyOutcome MsiViewModify(View view, int iModifyMode, int hRecord)
         {
             try
             {
-                ModifyRecord(hView, iModifyMode, hRecord);
+                ModifyRecord(view, iModifyMode, hRecord);
                 return ModifyOutcome.Ok;
             }
             catch (MsiErrorException e) when (e.Code == (uint) MsiError.FUNCTION_FAILED)
@@ -272,37 +272,37 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        private static void ModifyRecord(int hView, int iModifyMode, int hRecord)
+        private static void ModifyRecord(View view, int iModifyMode, int hRecord)
         {
-            EngineView view = HandleTable.Get<EngineView>(hView);
+            view.ThrowIfClosed();
             EngineRecord record = HandleTable.Get<EngineRecord>(hRecord);
             if (iModifyMode == (int) ViewModifyMode.Refresh || iModifyMode == (int) ViewModifyMode.Seek)
             {
                 // These fill the record in place rather than change the table.
-                object?[] found = view.Lookup(record.Values());
+                object?[] found = view.LookupRow(record.Values());
                 for (int j = 0; j < found.Length; j++)
                 {
                     record.Set((uint) (j + 1), found[j]);
                 }
                 return;
             }
-            view.Modify(iModifyMode, record.Values());
+            view.ModifyRow(iModifyMode, record.Values());
         }
 
         /// <summary>
         /// Returns the next validation error for the last modification. The engine keeps no per-column error
         /// information yet, so the error is always 0 (none).
         /// </summary>
-        internal static (int Error, string Column) MsiViewGetError(int hView)
+        internal static (int Error, string Column) MsiViewGetError(View view)
         {
             return (0, string.Empty);
         }
 
-        internal static int MsiViewGetColumnInfo(int hView, uint eColumnInfo)
+        internal static int MsiViewGetColumnInfo(View view, uint eColumnInfo)
         {
             return Guard(() =>
             {
-                EngineView view = HandleTable.Get<EngineView>(hView);
+                view.ThrowIfClosed();
                 IReadOnlyList<SqlColumn> columns = view.Query?.OutputColumns
                     ?? throw new MsiErrorException((uint) MsiError.FUNCTION_FAILED);
 

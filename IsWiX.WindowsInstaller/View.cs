@@ -17,7 +17,7 @@ namespace IsWiX.WindowsInstaller
     public class View : IEnumerable<Record>, IDisposable
     {
 
-        private readonly EngineHandle handleRef;
+        private bool closed;
 
         /// <summary>
         /// Checks if the handle is closed. When closed, method calls on the handle object may throw an <see cref="InvalidHandleException"/>.
@@ -26,18 +26,18 @@ namespace IsWiX.WindowsInstaller
         {
             get
             {
-                return this.handleRef.IsClosed;
+                return this.closed;
             }
         }
 
         /// <summary>
-        /// Gets the engine handle id. Throws if the handle has been closed.
+        /// Throws <see cref="InvalidHandleException"/> if the view has been closed.
         /// </summary>
-        internal int Id
+        internal void ThrowIfClosed()
         {
-            get
+            if (this.closed)
             {
-                return this.handleRef.Id;
+                throw new InvalidHandleException();
             }
         }
 
@@ -58,42 +58,43 @@ namespace IsWiX.WindowsInstaller
             this.Dispose();
         }
 
-        /// <summary>
-        /// Tests whether this object is equal to another of the same type with the same engine handle id.
-        /// </summary>
-        public override bool Equals(object obj)
-        {
-            return obj != null && this.GetType() == obj.GetType() &&
-                this.Id == ((View) obj).Id;
-        }
-
-        /// <summary>
-        /// Gets a hash value derived from the engine handle id.
-        /// </summary>
-        public override int GetHashCode()
-        {
-            return this.Id.GetHashCode();
-        }
-
         /// <summary>Releases the handle. Subclasses may override to release their own resources first.</summary>
         /// <param name="disposing">True when called from Dispose.</param>
         protected virtual void Dispose(bool disposing)
         {
             if (disposing)
             {
-                this.handleRef.Close();
+                this.closed = true;
             }
         }
         private Database database;
         private string sql;
         private IList<TableInfo> tables;
         private ColumnCollection columns;
+        private readonly BoundWrite? write;
+        private readonly BoundDdl? ddl;
+        private bool executed;
+        private int position;
 
-        internal View(int handle, string sql, Database database)
+        internal View(Database database, string sql, BoundSelect query)
         {
-            this.handleRef = new EngineHandle(handle, true);
-            this.sql = sql;
             this.database = database;
+            this.sql = sql;
+            this.Query = query;
+        }
+
+        internal View(Database database, string sql, BoundWrite write)
+        {
+            this.database = database;
+            this.sql = sql;
+            this.write = write;
+        }
+
+        internal View(Database database, string sql, BoundDdl ddl)
+        {
+            this.database = database;
+            this.sql = sql;
+            this.ddl = ddl;
         }
 
         /// <summary>
@@ -224,7 +225,7 @@ namespace IsWiX.WindowsInstaller
         {
             try
             {
-                MsiApi.MsiViewExecute(this.Id, (executeParams != null ? executeParams.Id : 0));
+                MsiApi.MsiViewExecute(this, (executeParams != null ? executeParams.Id : 0));
             }
             catch (BadQuerySyntaxException)
             {
@@ -258,7 +259,7 @@ namespace IsWiX.WindowsInstaller
         /// </p></remarks>
         public Record Fetch()
         {
-            int? recordHandle = MsiApi.MsiViewFetch(this.Id);
+            int? recordHandle = MsiApi.MsiViewFetch(this);
             if (recordHandle == null)
             {
                 return null;
@@ -319,7 +320,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("record");
             }
 
-            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this.Id, (int) mode, record.Id);
+            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this, (int) mode, record.Id);
             if (mode == ViewModifyMode.Insert || mode == ViewModifyMode.InsertTemporary)
             {
                 record.IsFormatStringInvalid = true;
@@ -477,7 +478,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("record");
             }
 
-            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this.Id, (int) ViewModifyMode.Seek, record.Id);
+            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this, (int) ViewModifyMode.Seek, record.Id);
             record.IsFormatStringInvalid = true;
             if (outcome == MsiApi.ModifyOutcome.FunctionFailed)
             {
@@ -516,7 +517,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("record");
             }
 
-            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this.Id, (int) ViewModifyMode.Merge, record.Id);
+            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this, (int) ViewModifyMode.Merge, record.Id);
             if (outcome == MsiApi.ModifyOutcome.FunctionFailed)
             {
                 return false;
@@ -624,13 +625,13 @@ namespace IsWiX.WindowsInstaller
 
         private ICollection<ValidationErrorInfo> InternalValidate(ViewModifyMode mode, Record record)
         {
-            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this.Id, (int) mode, record.Id);
+            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this, (int) mode, record.Id);
             if (outcome == MsiApi.ModifyOutcome.InvalidData)
             {
                 ICollection<ValidationErrorInfo> errorInfo = new List<ValidationErrorInfo>();
                 while (true)
                 {
-                    (int error, string column) = MsiApi.MsiViewGetError(this.Id);
+                    (int error, string column) = MsiApi.MsiViewGetError(this);
                     if (error == -3 /*MSIDBERROR_INVALIDARG*/)
                     {
                         throw InstallerException.ExceptionFromReturnCode((uint) MsiError.INVALID_PARAMETER);
@@ -650,6 +651,79 @@ namespace IsWiX.WindowsInstaller
                 throw InstallerException.ExceptionFromReturnCode((uint) MsiError.FUNCTION_FAILED);
             }
             return null;
+        }
+
+        /// <summary>The SELECT this view runs, or null for a write statement.</summary>
+        internal BoundSelect? Query { get; }
+
+        internal SqlResult? Result { get; private set; }
+
+        internal int MarkerCount => this.Query?.MarkerCount ?? this.write?.MarkerCount ?? this.ddl!.MarkerCount;
+
+        internal void RunStatement(object?[] markers)
+        {
+            if (this.write != null || this.ddl != null)
+            {
+                if (this.write != null)
+                {
+                    this.write.Execute(markers);
+                }
+                else
+                {
+                    this.ddl!.Execute(markers);
+                }
+                this.executed = true;
+                return;
+            }
+            this.Result = this.Query!.Execute(markers);
+            this.position = 0;
+        }
+
+        /// <summary>Returns the next row as a record, or null when the rows are exhausted.</summary>
+        internal EngineRecord? NextRow()
+        {
+            if (this.write != null || this.ddl != null)
+            {
+                if (!this.executed)
+                {
+                    throw new MsiErrorException((uint) MsiError.FUNCTION_FAILED);
+                }
+                return null;
+            }
+            if (this.Result == null)
+            {
+                throw new MsiErrorException((uint) MsiError.FUNCTION_FAILED);
+            }
+            if (this.position >= this.Result.Rows.Count)
+            {
+                return null;
+            }
+            return new EngineRecord(this.Result.Rows[this.position++]);
+        }
+
+        /// <summary>Applies one record to the view's table, as MsiViewModify does.</summary>
+        internal void ModifyRow(int mode, object?[] values)
+        {
+            if (this.Query == null)
+            {
+                throw new MsiErrorException((uint) MsiError.FUNCTION_FAILED);
+            }
+            if (mode >= (int) ViewModifyMode.Validate && mode <= (int) ViewModifyMode.ValidateDelete)
+            {
+                ViewModify.Check(this.database, this.Query, mode, values);
+                return;
+            }
+            ViewModify.Apply(this.database, this.Query, mode, values);
+        }
+
+        /// <summary>The view's values for the row whose key the record names, as MsiViewModify's Refresh and Seek give them.</summary>
+        internal object?[] LookupRow(object?[] values)
+        {
+            if (this.Query == null)
+            {
+                throw new MsiErrorException((uint) MsiError.FUNCTION_FAILED);
+            }
+            return ViewModify.Lookup(this.database, this.Query, values);
         }
     }
 }
