@@ -35,6 +35,9 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Install sign CLI tool
+        run: dotnet tool install --tool-path . --prerelease sign
+
       - name: Increment the version
         id: version
         shell: pwsh
@@ -79,29 +82,27 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
-      # NuGet author signing is not wired up yet. See the notes in the reply.
-
       - name: Pack
         shell: pwsh
         run: dotnet pack IsWiX.WindowsInstaller/IsWiX.WindowsInstaller.csproj -c Release -o nupkg --no-build
+
+      - name: Sign NuGet package
+        shell: pwsh
+        run: |
+          ./sign code artifact-signing `
+            --azure-credential-type azure-cli `
+            --verbosity warning `
+            --timestamp-url http://timestamp.acs.microsoft.com `
+            --artifact-signing-endpoint https://eus.codesigning.azure.net/ `
+            --artifact-signing-account ISWIX-LLC `
+            --artifact-signing-certificate-profile IsWiX `
+            ./nupkg/*.nupkg
 
       - name: Get a short-lived NuGet key (trusted publishing)
         uses: NuGet/login@v1
         id: login
         with:
           user: ${{ secrets.NUGET_USER }}
-
-      - name: Sign the nupkg (Artifact Signing)
-        uses: azure/artifact-signing-action@v2
-        with:
-          endpoint: https://eus.codesigning.azure.net/
-          signing-account-name: ISWIX-LLC
-          certificate-profile-name: IsWiX
-          files-folder: nupkg
-          files-folder-filter: nupkg
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
 
       - name: Publish to nuget.org
         shell: pwsh
