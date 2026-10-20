@@ -51,7 +51,7 @@ namespace IsWiX.WindowsInstaller
         /// </summary>
         /// <param name="referenceDatabase">Database that does not include the changes</param>
         /// <param name="transformFile">Name of the generated transform file</param>
-        /// <param name="errors`">Error conditions that should be suppressed
+        /// <param name="errors">Error conditions that should be suppressed
         /// when the transform is applied</param>
         /// <param name="validations">Defines which properties should be validated
         /// to verify that this transform can be applied to a database.</param>

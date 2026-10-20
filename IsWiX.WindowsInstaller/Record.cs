@@ -6,6 +6,7 @@ namespace IsWiX.WindowsInstaller
     using System.Text;
     using System.Collections.Generic;
     using System.Runtime.InteropServices;
+    using System.Runtime.Versioning;
     using System.Diagnostics.CodeAnalysis;
 
     /// <summary>
@@ -704,6 +705,10 @@ namespace IsWiX.WindowsInstaller
                 {
                     throw new NotSupportedException("Name column must be part of the Record in order to extract substorage.");
                 }
+                else if (!OperatingSystem.IsWindows())
+                {
+                    throw new PlatformNotSupportedException("Substorage extraction requires Windows.");
+                }
                 else
                 {
                     Record.ExtractSubStorage(this.view.Database.FilePath, this.GetString("Name"), filePath);
@@ -1025,6 +1030,7 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
+        [SupportedOSPlatform("windows")]
         [SuppressMessage("Microsoft.Security", "CA2122:DoNotIndirectlyExposeMethodsWithLinkDemands")]
         private static void ExtractSubStorage(string databaseFile, string storageName, string extractFile)
         {
