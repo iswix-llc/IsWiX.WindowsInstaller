@@ -1,0 +1,5 @@
+File	Component_	FileName	FileSize	Version	Sequence
+s72	s72	l255	i4	S72	i2
+File	File
+hello.txt	Main	hello.txt	12		1
+big.bin	Main	big.bin	-7	1.2.3.4	2
