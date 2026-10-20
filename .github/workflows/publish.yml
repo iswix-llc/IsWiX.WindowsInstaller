@@ -24,11 +24,11 @@ jobs:
   publish:
     runs-on: windows-latest
     steps:
-      - name: Check out dev
+      - name: Check out main
         uses: actions/checkout@v4
         with:
-          ref: dev
-          fetch-depth: 0
+          ref: main
+          fetch-depth: 1
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v4
