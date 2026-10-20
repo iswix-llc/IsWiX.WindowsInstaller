@@ -73,8 +73,8 @@ public class StressDatabaseTests : IClassFixture<StressDatabase>
     [SkippableFact]
     public void ReadsNineMegabyteStream()
     {
-        var expected = File.ReadAllText(TestFixtures.Path("generated/expected_big_sha256.txt")).Trim();
         var data = _db.GetTable("Blob").Rows[0].GetBinary("Data");
+        var expected = File.ReadAllText(TestFixtures.Path("generated/expected_big_sha256.txt")).Trim();
 
         Assert.NotNull(data);
         Assert.Equal(9_000_000, data!.Length);
