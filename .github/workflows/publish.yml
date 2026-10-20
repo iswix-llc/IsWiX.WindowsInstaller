@@ -1,0 +1,86 @@
+name: Publish NuGet package
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to increment
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - name: Check out dev
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Increment the version
+        id: version
+        shell: pwsh
+        run: |
+          $csproj = 'IsWiX.WindowsInstaller/IsWiX.WindowsInstaller.csproj'
+          $text = [IO.File]::ReadAllText($csproj)
+          if ($text -notmatch '<Version>(\d+)\.(\d+)\.(\d+)</Version>') { throw 'No <Version> element found.' }
+          $major = [int]$Matches[1]; $minor = [int]$Matches[2]; $patch = [int]$Matches[3]
+          switch ('${{ inputs.bump }}') {
+            'major' { $major++; $minor = 0; $patch = 0 }
+            'minor' { $minor++; $patch = 0 }
+            'patch' { $patch++ }
+          }
+          $new = "$major.$minor.$patch"
+          $text = $text -replace '<Version>\d+\.\d+\.\d+</Version>', "<Version>$new</Version>"
+          [IO.File]::WriteAllText($csproj, $text, (New-Object Text.UTF8Encoding($false)))
+          "version=$new" >> $env:GITHUB_OUTPUT
+          Write-Host "Publishing version $new"
+
+      - name: Build and test
+        shell: pwsh
+        run: |
+          dotnet build IsWiX.WindowsInstaller/IsWiX.WindowsInstaller.csproj -c Release
+          dotnet test IsWiX.WindowsInstaller.Tests/IsWiX.WindowsInstaller.Tests.csproj -c Release
+
+      - name: Pack
+        shell: pwsh
+        run: dotnet pack IsWiX.WindowsInstaller/IsWiX.WindowsInstaller.csproj -c Release -o nupkg --no-build
+
+      - name: Get a short-lived NuGet key (trusted publishing)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Publish to nuget.org
+        shell: pwsh
+        run: dotnet nuget push "nupkg/IsWiX.WindowsInstaller.${{ steps.version.outputs.version }}.nupkg" --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - name: Commit and tag the release
+        shell: pwsh
+        run: |
+          $v = '${{ steps.version.outputs.version }}'
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add IsWiX.WindowsInstaller/IsWiX.WindowsInstaller.csproj
+          git commit -m "Release $v"
+          git tag "v$v"
+          git push origin dev --follow-tags
