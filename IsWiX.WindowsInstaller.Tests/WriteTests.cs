@@ -132,6 +132,27 @@ public class WriteTests : IDisposable
     }
 
     [Fact]
+    public void ImportReplacesTableAndTakesBinaryFromFilesBesideIdt()
+    {
+        string path = CopyOfFixture();
+        string idt = Path.Combine(folder, "Binary.idt");
+        File.WriteAllText(idt, "Name\tData\r\ns72\tv0\r\nBinary\tName\r\nhello\tBinary.hello\r\ncopy\tBinary.copy\r\n");
+        File.Copy(TestFixtures.Path("hello.bin"), Path.Combine(folder, "Binary.hello"));
+        File.WriteAllBytes(Path.Combine(folder, "Binary.copy"), new byte[] { 1, 2, 3 });
+
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            db.Import(idt);
+            db.Commit();
+        }
+
+        using var reader = MsiDatabase.Open(path);
+        Assert.Equal(File.ReadAllBytes(TestFixtures.Path("hello.bin")), reader.ReadStream("Binary.hello"));
+        Assert.Equal(new byte[] { 1, 2, 3 }, reader.ReadStream("Binary.copy"));
+        Assert.Equal(2, reader.GetTable("Binary").Rows.Count);
+    }
+
+    [Fact]
     public void DirectModeWritesWithoutCommit()
     {
         string path = CopyOfFixture();

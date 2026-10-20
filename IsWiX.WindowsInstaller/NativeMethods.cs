@@ -269,7 +269,7 @@ namespace IsWiX.WindowsInstaller
 
         internal static uint MsiDatabaseImport(int hDatabase, string szFolderPath, string szFileName)
         {
-            return (uint) Error.CALL_NOT_IMPLEMENTED;
+            return Guard(() => ManagedHandles.Get<ManagedDatabase>(hDatabase).Import(System.IO.Path.Combine(szFolderPath, szFileName)));
         }
 
         internal static uint MsiDatabaseGenerateTransform(int hDatabase, int hDatabaseReference, string szTransformFile, int iReserved1, int iReserved2)

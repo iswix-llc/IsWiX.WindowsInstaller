@@ -51,6 +51,27 @@ public class DatabaseTests
     }
 
     [Fact]
+    public void ExportWritesBinaryCellAsStreamFileBesideIdt()
+    {
+        using var db = new Database(TestFixtures.Path("basic.msi"));
+        string folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            db.Export("Binary", System.IO.Path.Combine(folder, "Binary.idt"));
+
+            string[] lines = File.ReadAllLines(System.IO.Path.Combine(folder, "Binary.idt"));
+            Assert.Equal("hello\tBinary.hello", lines[3]);
+            Assert.Equal(File.ReadAllBytes(TestFixtures.Path("hello.bin")),
+                File.ReadAllBytes(System.IO.Path.Combine(folder, "Binary.hello")));
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
     public void MissingFileIsReported()
     {
         Assert.Throws<FileNotFoundException>(() => new Database(TestFixtures.Path("no-such-file.msi")));

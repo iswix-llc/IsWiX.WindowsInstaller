@@ -778,12 +778,173 @@ namespace IsWiX.WindowsInstaller
             else
             {
                 SqlTable sqlTable = this.FindTable(table) ?? throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
-                text = FormatIdt(sqlTable);
+                string folder = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".";
+                text = FormatIdt(sqlTable, folder);
             }
             File.WriteAllText(path, text, System.Text.Encoding.UTF8);
         }
 
-        private static string FormatIdt(SqlTable table)
+        /// <summary>
+        /// Reads a table from an IDT file and replaces the table of that name, or adds it. A binary cell names a file
+        /// in the same folder, and its bytes become the value. Rows are checked as they are inserted.
+        /// </summary>
+        public void Import(string path)
+        {
+            this.RequireWritable();
+            string folder = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".";
+            string[] lines;
+            try
+            {
+                lines = File.ReadAllLines(path);
+            }
+            catch (IOException)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.FILE_NOT_FOUND);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.ACCESS_DENIED);
+            }
+
+            if (lines.Length < 3)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+            }
+            string[] names = lines[0].Split('\t');
+            string[] types = lines[1].Split('\t');
+            string[] keyLine = lines[2].Split('\t');
+            if (names.Length != types.Length || keyLine.Length < 2)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+            }
+            string tableName = keyLine[0];
+            if (tableName.StartsWith('_') || tableName.Length == 0)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+            }
+
+            var columns = new List<SqlColumn>();
+            for (int i = 0; i < names.Length; i++)
+            {
+                bool isKey = keyLine.Skip(1).Contains(names[i], StringComparer.Ordinal);
+                columns.Add(ParseIdtColumn(tableName, names[i], types[i], isKey));
+            }
+            if (!columns.Any(c => c.IsPrimaryKey))
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+            }
+
+            var table = new MutableTable(tableName, columns, new List<object?[]>());
+            for (int line = 3; line < lines.Length; line++)
+            {
+                if (lines[line].Length == 0)
+                {
+                    continue;
+                }
+                string[] cells = lines[line].Split('\t');
+                if (cells.Length != columns.Count)
+                {
+                    throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                }
+                var row = new object?[columns.Count];
+                for (int i = 0; i < columns.Count; i++)
+                {
+                    row[i] = ParseIdtCell(columns[i], cells[i], folder);
+                }
+                table.Insert(row);
+            }
+
+            this.PutTable(table);
+            this.Changed();
+        }
+
+        private static SqlColumn ParseIdtColumn(string tableName, string name, string type, bool isKey)
+        {
+            if (type.Length < 2)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+            }
+            bool nullable = char.IsUpper(type[0]);
+            char letter = char.ToLowerInvariant(type[0]);
+            if (!int.TryParse(type.Substring(1), NumberStyles.None, CultureInfo.InvariantCulture, out int size) || size < 0)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+            }
+            switch (letter)
+            {
+                case 'i':
+                    if (size != 2 && size != 4)
+                    {
+                        throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                    }
+                    return new SqlColumn(tableName, name, MsiColumnType.Integer, size, nullable, isKey, false);
+                case 's':
+                    return new SqlColumn(tableName, name, MsiColumnType.String, size, nullable, isKey, false);
+                case 'l':
+                    return new SqlColumn(tableName, name, MsiColumnType.String, size, nullable, isKey, true);
+                case 'v':
+                    return new SqlColumn(tableName, name, MsiColumnType.Binary, 0, nullable, isKey, false);
+                default:
+                    throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+            }
+        }
+
+        private static object? ParseIdtCell(SqlColumn column, string text, string folder)
+        {
+            switch (column.Type)
+            {
+                case MsiColumnType.String:
+                    return text.Length == 0 ? null : text;
+                case MsiColumnType.Integer:
+                    if (text.Length == 0)
+                    {
+                        return null;
+                    }
+                    if (!int.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out int number))
+                    {
+                        throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                    }
+                    return number;
+                case MsiColumnType.Binary:
+                    if (text.Length == 0)
+                    {
+                        return null;
+                    }
+                    // The file must sit beside the IDT: a name with a folder part is not a binary cell.
+                    if (Path.GetFileName(text) != text)
+                    {
+                        throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+                    }
+                    try
+                    {
+                        return File.ReadAllBytes(Path.Combine(folder, text));
+                    }
+                    catch (FileNotFoundException)
+                    {
+                        throw new MsiErrorException((uint) NativeMethods.Error.FILE_NOT_FOUND);
+                    }
+                    catch (DirectoryNotFoundException)
+                    {
+                        throw new MsiErrorException((uint) NativeMethods.Error.FILE_NOT_FOUND);
+                    }
+                default:
+                    throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+            }
+        }
+
+        /// <summary>Puts a table in place of the one with its name, or adds it if the database has none.</summary>
+        private void PutTable(MutableTable table)
+        {
+            bool inFile = this.reader.ContainsTable(table.Name);
+            this.removedTables.RemoveAll(t => string.Equals(t, table.Name, StringComparison.OrdinalIgnoreCase));
+            if (!inFile && !this.addedTables.Any(t => string.Equals(t, table.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                this.addedTables.Add(table.Name);
+            }
+            this.tables[table.Name] = table;
+        }
+
+        private static string FormatIdt(SqlTable table, string folder)
         {
             var lines = new List<string>
             {
@@ -793,9 +954,39 @@ namespace IsWiX.WindowsInstaller
             };
             foreach (object?[] row in table.Rows)
             {
-                lines.Add(string.Join("\t", row.Select(FormatIdtValue)));
+                var cells = new List<string>(row.Length);
+                for (int i = 0; i < row.Length; i++)
+                {
+                    cells.Add(table.Columns[i].Type == MsiColumnType.Binary
+                        ? WriteBinaryCell(table, row, i, folder)
+                        : FormatIdtValue(row[i]));
+                }
+                lines.Add(string.Join("\t", cells));
             }
             return string.Join("\r\n", lines) + "\r\n";
+        }
+
+        /// <summary>
+        /// Writes a binary cell's bytes to a file beside the IDT, named "Table.key1.key2" as the stream is, and returns
+        /// that name for the cell. A null binary value is an empty cell.
+        /// </summary>
+        private static string WriteBinaryCell(SqlTable table, object?[] row, int column, string folder)
+        {
+            if (row[column] is not byte[] data)
+            {
+                return string.Empty;
+            }
+            var parts = new List<string> { table.Name };
+            for (int i = 0; i < table.Columns.Count; i++)
+            {
+                if (table.Columns[i].IsPrimaryKey)
+                {
+                    parts.Add(FormatIdtValue(row[i]));
+                }
+            }
+            string name = string.Join(".", parts);
+            File.WriteAllBytes(Path.Combine(folder, name), data);
+            return name;
         }
 
         private static string FormatIdtValue(object? value)
