@@ -139,32 +139,6 @@ namespace IsWiX.WindowsInstaller
             public uint dwStatus;
         }
 
-        internal class MsiHandle : SafeHandle
-        {
-            [SuppressMessage("Microsoft.Security", "CA2122:DoNotIndirectlyExposeMethodsWithLinkDemands")]
-            public MsiHandle(IntPtr handle, bool ownsHandle)
-                : base(handle, ownsHandle)
-            {
-            }
-
-            public override bool IsInvalid
-            {
-                get
-                {
-                    return this.handle == IntPtr.Zero;
-                }
-            }
-
-            public static implicit operator IntPtr(MsiHandle msiHandle)
-            {
-                return msiHandle.handle;
-            }
-
-            protected override bool ReleaseHandle()
-            {
-                    return true;
-            }
-        }
 
         internal static uint MsiOpenDatabase(string szDatabasePath, IntPtr uiOpenMode, out int hDatabase)
         {

@@ -50,7 +50,7 @@ namespace IsWiX.WindowsInstaller
         /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msicreaterecord.asp">MsiCreateRecord</a>
         /// </p></remarks>
         public Record(int fieldCount)
-            : this((IntPtr) NativeMethods.MsiCreateRecord((uint) fieldCount), true, (View) null)
+            : this(NativeMethods.MsiCreateRecord((uint) fieldCount), true, (View) null)
         {
         }
 
@@ -75,7 +75,7 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        internal Record(IntPtr handle, bool ownsHandle, View view)
+        internal Record(int handle, bool ownsHandle, View view)
             : base(handle, ownsHandle)
         {
             this.view = view;
@@ -92,7 +92,7 @@ namespace IsWiX.WindowsInstaller
         {
             get
             {
-                return (int) NativeMethods.MsiRecordGetFieldCount((int) this.Handle);
+                return (int) NativeMethods.MsiRecordGetFieldCount(this.Id);
             }
         }
 
@@ -243,7 +243,7 @@ namespace IsWiX.WindowsInstaller
         /// <param name="ownsHandle">true to close the handle when this object is disposed or finalized</param>
         public static Record FromHandle(IntPtr handle, bool ownsHandle)
         {
-            return new Record(handle, ownsHandle, (View) null);
+            return new Record((int) handle, ownsHandle, (View) null);
         }
         
         /// <summary>
@@ -255,7 +255,7 @@ namespace IsWiX.WindowsInstaller
         /// </p></remarks>
         public void Clear()
         {
-            uint ret = NativeMethods.MsiRecordClearData((int) this.Handle);
+            uint ret = NativeMethods.MsiRecordClearData(this.Id);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -276,7 +276,7 @@ namespace IsWiX.WindowsInstaller
         public bool IsNull(int field)
         {
             this.CheckRange(field);
-            return NativeMethods.MsiRecordIsNull((int) this.Handle, (uint) field);
+            return NativeMethods.MsiRecordIsNull(this.Id, (uint) field);
         }
 
         /// <summary>
@@ -315,7 +315,7 @@ namespace IsWiX.WindowsInstaller
         public int GetDataSize(int field)
         {
             this.CheckRange(field);
-            return (int) NativeMethods.MsiRecordDataSize((int) this.Handle, (uint) field);
+            return (int) NativeMethods.MsiRecordDataSize(this.Id, (uint) field);
         }
 
         /// <summary>
@@ -358,7 +358,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            int value = NativeMethods.MsiRecordGetInteger((int) this.Handle, (uint) field);
+            int value = NativeMethods.MsiRecordGetInteger(this.Id, (uint) field);
             if (value == Int32.MinValue)  // MSI_NULL_INTEGER
             {
                 return 0;
@@ -397,7 +397,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            int value = NativeMethods.MsiRecordGetInteger((int) this.Handle, (uint) field);
+            int value = NativeMethods.MsiRecordGetInteger(this.Id, (uint) field);
             if (value == Int32.MinValue)  // MSI_NULL_INTEGER
             {
                 return null;
@@ -435,7 +435,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            uint ret = NativeMethods.MsiRecordSetInteger((int) this.Handle, (uint) field, value);
+            uint ret = NativeMethods.MsiRecordSetInteger(this.Id, (uint) field, value);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -473,7 +473,7 @@ namespace IsWiX.WindowsInstaller
             this.CheckRange(field);
 
             uint ret = NativeMethods.MsiRecordSetInteger(
-                (int) this.Handle,
+                this.Id,
                 (uint) field,
                 value.HasValue ? (int) value : Int32.MinValue);
             if (ret != 0)
@@ -513,11 +513,11 @@ namespace IsWiX.WindowsInstaller
 
             StringBuilder buf = new StringBuilder(String.Empty);
             uint bufSize = 0;
-            uint ret = NativeMethods.MsiRecordGetString((int) this.Handle, (uint) field, buf, ref bufSize);
+            uint ret = NativeMethods.MsiRecordGetString(this.Id, (uint) field, buf, ref bufSize);
             if (ret == (uint) NativeMethods.Error.MORE_DATA)
             {
                 buf.Capacity = (int) ++bufSize;
-                ret = NativeMethods.MsiRecordGetString((int) this.Handle, (uint) field, buf, ref bufSize);
+                ret = NativeMethods.MsiRecordGetString(this.Id, (uint) field, buf, ref bufSize);
             }
             if (ret != 0)
             {
@@ -559,7 +559,7 @@ namespace IsWiX.WindowsInstaller
                 value = String.Empty;
             }
 
-            uint ret = NativeMethods.MsiRecordSetString((int) this.Handle, (uint) field, value);
+            uint ret = NativeMethods.MsiRecordSetString(this.Id, (uint) field, value);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -744,7 +744,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("filePath");
             }
 
-            uint ret = NativeMethods.MsiRecordSetStream((int) this.Handle, (uint) field, filePath);
+            uint ret = NativeMethods.MsiRecordSetStream(this.Id, (uint) field, filePath);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -792,7 +792,7 @@ namespace IsWiX.WindowsInstaller
 
             if (stream == null)
             {
-                uint ret = NativeMethods.MsiRecordSetStream((int) this.Handle, (uint) field, null);
+                uint ret = NativeMethods.MsiRecordSetStream(this.Id, (uint) field, null);
                 if (ret != 0)
                 {
                     throw InstallerException.ExceptionFromReturnCode(ret);
@@ -814,7 +814,7 @@ namespace IsWiX.WindowsInstaller
                     writeStream.Close();
                     writeStream = null;
 
-                    uint ret = NativeMethods.MsiRecordSetStream((int) this.Handle, (uint) field, tempPath);
+                    uint ret = NativeMethods.MsiRecordSetStream(this.Id, (uint) field, tempPath);
                     if (ret != 0)
                     {
                         throw InstallerException.ExceptionFromReturnCode(ret);
@@ -897,15 +897,15 @@ namespace IsWiX.WindowsInstaller
             }
 
             InstallerHandle session = provider as InstallerHandle;
-            int sessionHandle = session != null ? (int) session.Handle : 0;
+            int sessionHandle = session != null ? session.Id : 0;
             StringBuilder buf = new StringBuilder(String.Empty);
             uint bufSize = 1;
-            uint ret = NativeMethods.MsiFormatRecord(sessionHandle, (int) this.Handle, buf, ref bufSize);
+            uint ret = NativeMethods.MsiFormatRecord(sessionHandle, this.Id, buf, ref bufSize);
             if (ret == (uint) NativeMethods.Error.MORE_DATA)
             {
                 bufSize++;
                 buf = new StringBuilder((int) bufSize);
-                ret = NativeMethods.MsiFormatRecord(sessionHandle, (int) this.Handle, buf, ref bufSize);
+                ret = NativeMethods.MsiFormatRecord(sessionHandle, this.Id, buf, ref bufSize);
             }
             if (ret != 0)
             {

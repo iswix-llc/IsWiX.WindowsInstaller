@@ -3,34 +3,36 @@
 namespace IsWiX.WindowsInstaller
 {
     using System;
-    using System.ComponentModel;
     using System.Diagnostics.CodeAnalysis;
 
     /// <summary>
     /// Base class for Windows Installer handle types (Database, View, Record, SummaryInfo).
     /// </summary>
     /// <remarks><p>
-    /// These classes implement the <see cref="IDisposable"/> interface, because they
-    /// hold unmanaged resources (MSI handles) that should be properly disposed
-    /// when no longer needed.
+    /// Each instance refers to an entry in the engine's handle table by its integer id.
+    /// Disposing an instance that owns its handle removes that entry and releases the object behind it.
     /// </p></remarks>
-    public abstract class InstallerHandle : MarshalByRefObject, IDisposable
+    public abstract class InstallerHandle : IDisposable
     {
-        private NativeMethods.MsiHandle handle;
+        private readonly int id;
+        private readonly bool ownsHandle;
+        private readonly object sync = new object();
+        private bool closed;
 
         /// <summary>
-        /// Constructs a handle object from a native integer handle.
+        /// Constructs a handle object from an engine handle id.
         /// </summary>
-        /// <param name="handle">Native integer handle.</param>
-        /// <param name="ownsHandle">true to close the handle when this object is disposed or finalized</param>
-        protected InstallerHandle(IntPtr handle, bool ownsHandle)
+        /// <param name="id">Engine handle id.</param>
+        /// <param name="ownsHandle">true to close the handle when this object is disposed</param>
+        protected InstallerHandle(int id, bool ownsHandle)
         {
-            if (handle == IntPtr.Zero)
+            if (id == 0)
             {
                 throw new InvalidHandleException();
             }
 
-            this.handle = new NativeMethods.MsiHandle(handle, ownsHandle);
+            this.id = id;
+            this.ownsHandle = ownsHandle;
         }
 
         /// <summary>
@@ -41,113 +43,103 @@ namespace IsWiX.WindowsInstaller
         {
             get
             {
-                if (this.IsClosed)
+                return this.Id;
+            }
+        }
+
+        /// <summary>
+        /// Gets the engine handle id. Throws if this handle has been closed.
+        /// </summary>
+        internal int Id
+        {
+            get
+            {
+                if (this.closed)
                 {
                     throw new InvalidHandleException();
                 }
-                return this.handle;
+                return this.id;
             }
         }
 
         /// <summary>
         /// Checks if the handle is closed. When closed, method calls on the handle object may throw an <see cref="InvalidHandleException"/>.
         /// </summary>
-        [SuppressMessage("Microsoft.Security", "CA2122:DoNotIndirectlyExposeMethodsWithLinkDemands")]
         public bool IsClosed
         {
             get
             {
-                return this.handle.IsClosed;
+                return this.closed;
             }
         }
 
         /// <summary>
         /// Closes the handle.  After closing a handle, further method calls may throw an <see cref="InvalidHandleException"/>.
         /// </summary>
-        /// <remarks><p>
-        /// The finalizer of this class will NOT close the handle if it is still open,
-        /// because finalization can run on a separate thread from the application,
-        /// resulting in potential problems if handles are closed from that thread.
-        /// It is best that the handle be closed manually as soon as it is no longer needed,
-        /// as leaving lots of unused handles open can degrade performance.
-        /// </p><p>
-        /// Win32 MSI API:
-        /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msiclosehandle.asp">MsiCloseHandle</a>
-        /// </p></remarks>
         /// <seealso cref="Close"/>
-        public void Dispose() 
+        public void Dispose()
         {
             this.Dispose(true);
-            GC.SuppressFinalize(this); 
+            GC.SuppressFinalize(this);
         }
 
         /// <summary>
-        /// Closes the handle.  After closing a handle, further method calls may throw an <see cref="InvalidHandleException"/>.
+        /// Closes the handle. This method is merely an alias for the <see cref="Dispose()"/> method.
         /// </summary>
-        /// <remarks><p>
-        /// The finalizer of this class will NOT close the handle if it is still open,
-        /// because finalization can run on a separate thread from the application,
-        /// resulting in potential problems if handles are closed from that thread.
-        /// It is best that the handle be closed manually as soon as it is no longer needed,
-        /// as leaving lots of unused handles open can degrade performance.
-        /// </p><p>
-        /// This method is merely an alias for the <see cref="Dispose()"/> method.
-        /// </p><p>
-        /// Win32 MSI API:
-        /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msiclosehandle.asp">MsiCloseHandle</a>
-        /// </p></remarks>
         public void Close()
         {
             this.Dispose();
         }
 
         /// <summary>
-        /// Tests whether this handle object is equal to another handle object.  Two handle objects are equal
-        /// if their types are the same and their native integer handles are the same.
+        /// Tests whether this handle object is equal to another handle object: same type and same engine id.
         /// </summary>
-        /// <param name="obj">The handle object to compare with the current handle object.</param>
-        /// <returns>true if the specified handle object is equal to the current handle object; otherwise false</returns>
         public override bool Equals(object obj)
         {
-            return (obj != null && this.GetType() == obj.GetType() &&
-                this.Handle == ((InstallerHandle) obj).Handle);
+            return obj != null && this.GetType() == obj.GetType() &&
+                this.Id == ((InstallerHandle) obj).Id;
         }
 
         /// <summary>
-        /// Gets a hash value for the handle object.
+        /// Gets a hash value for the handle object, derived from its engine id.
         /// </summary>
-        /// <returns>A hash code for the handle object.</returns>
-        /// <remarks><p>
-        /// The hash code is derived from the native integer handle.
-        /// </p></remarks>
         public override int GetHashCode()
         {
-            return this.Handle.GetHashCode();
+            return this.Id.GetHashCode();
         }
 
         /// <summary>
-        /// Gets an object that can be used internally for safe syncronization.
+        /// Gets an object that can be used internally for safe synchronization.
         /// </summary>
         internal object Sync
         {
             get
             {
-                return this.handle;
+                return this.sync;
             }
         }
 
         /// <summary>
-        /// Closes the handle.  After closing a handle, further method calls may throw an <see cref="InvalidHandleException"/>.
+        /// Closes the handle. Subclasses override this to release their own resources first.
         /// </summary>
-        /// <param name="disposing">If true, the method has been called directly or indirectly by a user's code,
-        /// so managed and unmanaged resources will be disposed. If false, the method has been called by the 
-        /// runtime from inside the finalizer, and only unmanaged resources will be disposed.</param>
+        /// <param name="disposing">If true, the handle is removed from the engine's handle table
+        /// (when this object owns it). The finalizer is not used, because handles must be closed
+        /// deliberately from the application's thread.</param>
         [SuppressMessage("Microsoft.Security", "CA2122:DoNotIndirectlyExposeMethodsWithLinkDemands")]
-        protected virtual void Dispose(bool disposing) 
+        protected virtual void Dispose(bool disposing)
         {
-            if (disposing) 
+            lock (this.sync)
             {
-                this.handle.Dispose();
+                if (this.closed)
+                {
+                    return;
+                }
+                this.closed = true;
+            }
+
+            if (disposing && this.ownsHandle)
+            {
+                NativeMethods.MsiCloseHandle(this.id);
             }
         }
     }

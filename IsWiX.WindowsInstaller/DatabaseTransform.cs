@@ -44,7 +44,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("transformFile");
             }
 
-            uint ret = NativeMethods.MsiDatabaseGenerateTransform((int) this.Handle, (int) referenceDatabase.Handle, transformFile, 0, 0);
+            uint ret = NativeMethods.MsiDatabaseGenerateTransform(this.Id, referenceDatabase.Id, transformFile, 0, 0);
             if (ret == (uint) NativeMethods.Error.NO_DATA)
             {
                 return false;
@@ -91,8 +91,8 @@ namespace IsWiX.WindowsInstaller
             }
 
             uint ret = NativeMethods.MsiCreateTransformSummaryInfo(
-                (int) this.Handle,
-                (int) referenceDatabase.Handle,
+                this.Id,
+                referenceDatabase.Id,
                 transformFile,
                 (int) errors,
                 (int) validations);
@@ -170,7 +170,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("transformFile");
             }
 
-            uint ret = NativeMethods.MsiDatabaseApplyTransform((int) this.Handle, transformFile, (int) errorConditionsToSuppress);
+            uint ret = NativeMethods.MsiDatabaseApplyTransform(this.Id, transformFile, (int) errorConditionsToSuppress);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);

@@ -32,11 +32,11 @@ namespace IsWiX.WindowsInstaller
         /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msigetsummaryinformation.asp">MsiGetSummaryInformation</a>
         /// </p></remarks>
         public SummaryInfo(string packagePath, bool enableWrite)
-            : base((IntPtr) SummaryInfo.OpenSummaryInfo(packagePath, enableWrite), true)
+            : base(SummaryInfo.OpenSummaryInfo(packagePath, enableWrite), true)
         {
         }
 
-        internal SummaryInfo(IntPtr handle, bool ownsHandle) : base(handle, ownsHandle)
+        internal SummaryInfo(int handle, bool ownsHandle) : base(handle, ownsHandle)
         {
         }
 
@@ -426,7 +426,7 @@ namespace IsWiX.WindowsInstaller
                 long timeValue = 0;
 
                 uint ret = NativeMethods.MsiSummaryInfoGetProperty(
-                    (int) this.Handle,
+                    this.Id,
                     property,
                     out dataType,
                     out intValue,
@@ -466,7 +466,7 @@ namespace IsWiX.WindowsInstaller
                         {
                             stringValue.Capacity = (int) ++bufSize;
                             ret = NativeMethods.MsiSummaryInfoGetProperty(
-                                (int) this.Handle,
+                                this.Id,
                                 property,
                                 out dataType,
                                 out intValue,
@@ -546,7 +546,7 @@ namespace IsWiX.WindowsInstaller
                 }
 
                 uint ret = NativeMethods.MsiSummaryInfoSetProperty(
-                    (int) this.Handle,
+                    this.Id,
                     property,
                     dataType,
                     intValue,
@@ -578,7 +578,7 @@ namespace IsWiX.WindowsInstaller
         /// </p></remarks>
         public void Persist()
         {
-            uint ret = NativeMethods.MsiSummaryInfoPersist((int) this.Handle);
+            uint ret = NativeMethods.MsiSummaryInfoPersist(this.Id);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);

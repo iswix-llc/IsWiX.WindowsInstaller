@@ -86,7 +86,7 @@ namespace IsWiX.WindowsInstaller
         /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msiopendatabase.asp">MsiOpenDatabase</a>
         /// </p></remarks>
         public Database(string filePath, string outputPath)
-            : this((IntPtr) Database.Open(filePath, outputPath), true, outputPath, DatabaseOpenMode.CreateDirect)
+            : this(Database.Open(filePath, outputPath), true, outputPath, DatabaseOpenMode.CreateDirect)
         {
         }
 
@@ -116,7 +116,7 @@ namespace IsWiX.WindowsInstaller
         /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msiopendatabase.asp">MsiOpenDatabase</a>
         /// </p></remarks>
         public Database(string filePath, DatabaseOpenMode mode)
-            : this((IntPtr) Database.Open(filePath, mode), true, filePath, mode)
+            : this(Database.Open(filePath, mode), true, filePath, mode)
         {
         }
 
@@ -129,7 +129,7 @@ namespace IsWiX.WindowsInstaller
         /// <param name="filePath">Path of the database file, if known</param>
         /// <param name="openMode">Mode the handle was originally opened in</param>
         protected internal Database(
-            IntPtr handle, bool ownsHandle, string filePath, DatabaseOpenMode openMode)
+            int handle, bool ownsHandle, string filePath, DatabaseOpenMode openMode)
             : base(handle, ownsHandle)
         {
             this.filePath = filePath;
@@ -169,7 +169,7 @@ namespace IsWiX.WindowsInstaller
         {
             get
             {
-                int state = NativeMethods.MsiGetDatabaseState((int) this.Handle);
+                int state = NativeMethods.MsiGetDatabaseState(this.Id);
                 return state != 1;
             }
         }
@@ -266,12 +266,12 @@ namespace IsWiX.WindowsInstaller
                         {
                             int summaryInfoHandle;
                             int maxProperties = this.IsReadOnly ? 0 : SummaryInfo.MAX_PROPERTIES;
-                            uint ret = NativeMethods.MsiGetSummaryInformation((int) this.Handle, null, (uint) maxProperties, out summaryInfoHandle);
+                            uint ret = NativeMethods.MsiGetSummaryInformation(this.Id, null, (uint) maxProperties, out summaryInfoHandle);
                             if (ret != 0)
                             {
                                 throw InstallerException.ExceptionFromReturnCode(ret);
                             }
-                            this.summaryInfo = new SummaryInfo((IntPtr) summaryInfoHandle, true);
+                            this.summaryInfo = new SummaryInfo(summaryInfoHandle, true);
                         }
                     }
                 }
@@ -292,7 +292,7 @@ namespace IsWiX.WindowsInstaller
         public static Database FromHandle(IntPtr handle, bool ownsHandle)
         {
             return new Database(
-                handle,
+                (int) handle,
                 ownsHandle,
                 null,
                 NativeMethods.MsiGetDatabaseState((int) handle) == 1 ? DatabaseOpenMode.Direct : DatabaseOpenMode.ReadOnly);
@@ -368,7 +368,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("otherDatabase");
             }
 
-            uint ret = NativeMethods.MsiDatabaseMerge((int) this.Handle, (int) otherDatabase.Handle, errorTable);
+            uint ret = NativeMethods.MsiDatabaseMerge(this.Id, otherDatabase.Id, errorTable);
             if (ret != 0)
             {
                 if (ret == (uint) NativeMethods.Error.FUNCTION_FAILED)
@@ -439,7 +439,7 @@ namespace IsWiX.WindowsInstaller
             {
                 throw new ArgumentNullException("table");
             }
-            uint ret = NativeMethods.MsiDatabaseIsTablePersistent((int) this.Handle, table);
+            uint ret = NativeMethods.MsiDatabaseIsTablePersistent(this.Id, table);
             if (ret == 3)  // MSICONDITION_ERROR
             {
                 throw new InstallerException();
@@ -526,7 +526,7 @@ namespace IsWiX.WindowsInstaller
                     {
                         // Avoid creating unnecessary Record objects by not calling View.Fetch().
                         int recordHandle;
-                        uint ret = NativeMethods.MsiViewFetch((int)view.Handle, out recordHandle);
+                        uint ret = NativeMethods.MsiViewFetch(view.Id, out recordHandle);
                         if (ret == (uint)NativeMethods.Error.NO_MORE_ITEMS)
                         {
                             break;
@@ -578,7 +578,7 @@ namespace IsWiX.WindowsInstaller
                 this.summaryInfo.Close();
                 this.summaryInfo = null;
             }
-            uint ret = NativeMethods.MsiDatabaseCommit((int) this.Handle);
+            uint ret = NativeMethods.MsiDatabaseCommit(this.Id);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -604,7 +604,7 @@ namespace IsWiX.WindowsInstaller
             }
 
             FileInfo file = new FileInfo(exportFilePath);
-            uint ret = NativeMethods.MsiDatabaseExport((int) this.Handle, table, file.DirectoryName, file.Name);
+            uint ret = NativeMethods.MsiDatabaseExport(this.Id, table, file.DirectoryName, file.Name);
             if (ret != 0)
             {
                 if (ret == (uint) NativeMethods.Error.BAD_PATHNAME)
@@ -637,7 +637,7 @@ namespace IsWiX.WindowsInstaller
             }
 
             FileInfo file = new FileInfo(importFilePath);
-            uint ret = NativeMethods.MsiDatabaseImport((int) this.Handle, file.DirectoryName, file.Name);
+            uint ret = NativeMethods.MsiDatabaseImport(this.Id, file.DirectoryName, file.Name);
             if (ret != 0)
             {
                 if (ret == (uint) NativeMethods.Error.BAD_PATHNAME)
@@ -797,7 +797,7 @@ namespace IsWiX.WindowsInstaller
         public Record CreateRecord(int fieldCount)
         {
             int hRecord = NativeMethods.MsiCreateRecord((uint) fieldCount);
-            return new Record((IntPtr) hRecord, true, (View) null);
+            return new Record(hRecord, true, (View) null);
         }
 
         /// <summary>
@@ -811,7 +811,7 @@ namespace IsWiX.WindowsInstaller
             }
             else
             {
-                return "#" + ((int) this.Handle).ToString(CultureInfo.InvariantCulture);
+                return "#" + (this.Id).ToString(CultureInfo.InvariantCulture);
             }
         }
 

@@ -23,7 +23,7 @@ namespace IsWiX.WindowsInstaller
         private IList<TableInfo> tables;
         private ColumnCollection columns;
 
-        internal View(IntPtr handle, string sql, Database database)
+        internal View(int handle, string sql, Database database)
             : base(handle, true)
         {
             this.sql = sql;
@@ -157,8 +157,8 @@ namespace IsWiX.WindowsInstaller
         public void Execute(Record executeParams)
         {
             uint ret = NativeMethods.MsiViewExecute(
-                (int) this.Handle,
-                (executeParams != null ? (int) executeParams.Handle : 0));
+                this.Id,
+                (executeParams != null ? executeParams.Id : 0));
             if (ret == (uint) NativeMethods.Error.BAD_QUERY_SYNTAX)
             {
                 throw new BadQuerySyntaxException(this.sql);
@@ -196,7 +196,7 @@ namespace IsWiX.WindowsInstaller
         public Record Fetch()
         {
             int recordHandle;
-            uint ret = NativeMethods.MsiViewFetch((int) this.Handle, out recordHandle);
+            uint ret = NativeMethods.MsiViewFetch(this.Id, out recordHandle);
             if (ret == (uint) NativeMethods.Error.NO_MORE_ITEMS)
             {
                 return null;
@@ -206,7 +206,7 @@ namespace IsWiX.WindowsInstaller
                 throw InstallerException.ExceptionFromReturnCode(ret);
             }
 
-            Record r = new Record((IntPtr) recordHandle, true, this);
+            Record r = new Record(recordHandle, true, this);
             r.IsFormatStringInvalid = true;
             return r;
         }
@@ -261,7 +261,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("record");
             }
 
-            uint ret = NativeMethods.MsiViewModify((int) this.Handle, (int) mode, (int) record.Handle);
+            uint ret = NativeMethods.MsiViewModify(this.Id, (int) mode, record.Id);
             if (mode == ViewModifyMode.Insert || mode == ViewModifyMode.InsertTemporary)
             {
                 record.IsFormatStringInvalid = true;
@@ -418,7 +418,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("record");
             }
 
-            uint ret = NativeMethods.MsiViewModify((int) this.Handle, (int) ViewModifyMode.Seek, (int) record.Handle);
+            uint ret = NativeMethods.MsiViewModify(this.Id, (int) ViewModifyMode.Seek, record.Id);
             record.IsFormatStringInvalid = true;
             if (ret == (uint) NativeMethods.Error.FUNCTION_FAILED)
             {
@@ -457,7 +457,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("record");
             }
 
-            uint ret = NativeMethods.MsiViewModify((int) this.Handle, (int) ViewModifyMode.Merge, (int) record.Handle);
+            uint ret = NativeMethods.MsiViewModify(this.Id, (int) ViewModifyMode.Merge, record.Id);
             if (ret == (uint) NativeMethods.Error.FUNCTION_FAILED)
             {
                 return false;
@@ -565,7 +565,7 @@ namespace IsWiX.WindowsInstaller
 
         private ICollection<ValidationErrorInfo> InternalValidate(ViewModifyMode mode, Record record)
         {
-            uint ret = NativeMethods.MsiViewModify((int) this.Handle, (int) mode, (int) record.Handle);
+            uint ret = NativeMethods.MsiViewModify(this.Id, (int) mode, record.Id);
             if (ret == (uint) NativeMethods.Error.INVALID_DATA)
             {
                 ICollection<ValidationErrorInfo> errorInfo = new List<ValidationErrorInfo>();
@@ -573,11 +573,11 @@ namespace IsWiX.WindowsInstaller
                 {
                     uint bufSize = 40;
                     StringBuilder column = new StringBuilder("", (int) bufSize);
-                    int error = NativeMethods.MsiViewGetError((int) this.Handle, column, ref bufSize);
+                    int error = NativeMethods.MsiViewGetError(this.Id, column, ref bufSize);
                     if (error == -2 /*MSIDBERROR_MOREDATA*/)
                     {
                         column.Capacity = (int) ++bufSize;
-                        error = NativeMethods.MsiViewGetError((int) this.Handle, column, ref bufSize);
+                        error = NativeMethods.MsiViewGetError(this.Id, column, ref bufSize);
                     }
                     
                     if (error == -3 /*MSIDBERROR_INVALIDARG*/)

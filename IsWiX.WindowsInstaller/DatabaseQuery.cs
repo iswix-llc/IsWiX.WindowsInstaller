@@ -38,13 +38,13 @@ namespace IsWiX.WindowsInstaller
             string sql = (args == null || args.Length == 0 ? sqlFormat :
                 String.Format(CultureInfo.InvariantCulture, sqlFormat, args));
             int viewHandle;
-            uint ret = NativeMethods.MsiDatabaseOpenView((int) this.Handle, sql, out viewHandle);
+            uint ret = NativeMethods.MsiDatabaseOpenView(this.Id, sql, out viewHandle);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
             }
 
-            return new View((IntPtr) viewHandle, sql, this);
+            return new View(viewHandle, sql, this);
         }
 
         /// <summary>

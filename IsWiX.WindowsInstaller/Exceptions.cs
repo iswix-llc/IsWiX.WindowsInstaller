@@ -242,7 +242,7 @@ namespace IsWiX.WindowsInstaller
             int recordHandle = NativeMethods.MsiGetLastErrorRecord();
             if (recordHandle != 0)
             {
-                using (Record errorRec = new Record((IntPtr) recordHandle, true, null))
+                using (Record errorRec = new Record(recordHandle, true, null))
                 {
                     this.errorData = new object[errorRec.FieldCount];
                     for (int i = 0; i < this.errorData.Length; i++)

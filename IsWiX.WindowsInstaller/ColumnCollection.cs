@@ -302,13 +302,13 @@ namespace IsWiX.WindowsInstaller
             int recordHandle;
             int typesFlag = types ? 1 : 0;
             uint ret = NativeMethods.MsiViewGetColumnInfo(
-                (int) view.Handle, (uint) typesFlag, out recordHandle);
+                view.Id, (uint) typesFlag, out recordHandle);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
             }
 
-            using (Record rec = new Record((IntPtr) recordHandle, true, null))
+            using (Record rec = new Record(recordHandle, true, null))
             {
                 int count = rec.FieldCount;
                 IList<string> columnsList = new List<string>(count);
@@ -319,7 +319,7 @@ namespace IsWiX.WindowsInstaller
                 {
                     uint bufSize = 256;
                     StringBuilder buf = new StringBuilder((int) bufSize);
-                    ret = NativeMethods.MsiRecordGetString((int) rec.Handle, (uint) field, buf, ref bufSize);
+                    ret = NativeMethods.MsiRecordGetString(rec.Id, (uint) field, buf, ref bufSize);
                     if (ret != 0)
                     {
                         throw InstallerException.ExceptionFromReturnCode(ret);
