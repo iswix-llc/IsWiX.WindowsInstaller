@@ -239,7 +239,7 @@ namespace IsWiX.WindowsInstaller
         internal void SaveErrorRecord()
         {
             // TODO: pass an affinity handle here?
-            int recordHandle = RemotableNativeMethods.MsiGetLastErrorRecord(0);
+            int recordHandle = NativeMethods.MsiGetLastErrorRecord();
             if (recordHandle != 0)
             {
                 using (Record errorRec = new Record((IntPtr) recordHandle, true, null))

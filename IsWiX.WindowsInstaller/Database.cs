@@ -169,11 +169,6 @@ namespace IsWiX.WindowsInstaller
         {
             get
             {
-                if (RemotableNativeMethods.RemotingEnabled)
-                {
-                    return true;
-                }
-
                 int state = NativeMethods.MsiGetDatabaseState((int) this.Handle);
                 return state != 1;
             }
@@ -271,7 +266,7 @@ namespace IsWiX.WindowsInstaller
                         {
                             int summaryInfoHandle;
                             int maxProperties = this.IsReadOnly ? 0 : SummaryInfo.MAX_PROPERTIES;
-                            uint ret = RemotableNativeMethods.MsiGetSummaryInformation((int) this.Handle, null, (uint) maxProperties, out summaryInfoHandle);
+                            uint ret = NativeMethods.MsiGetSummaryInformation((int) this.Handle, null, (uint) maxProperties, out summaryInfoHandle);
                             if (ret != 0)
                             {
                                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -444,7 +439,7 @@ namespace IsWiX.WindowsInstaller
             {
                 throw new ArgumentNullException("table");
             }
-            uint ret = RemotableNativeMethods.MsiDatabaseIsTablePersistent((int) this.Handle, table);
+            uint ret = NativeMethods.MsiDatabaseIsTablePersistent((int) this.Handle, table);
             if (ret == 3)  // MSICONDITION_ERROR
             {
                 throw new InstallerException();
@@ -531,7 +526,7 @@ namespace IsWiX.WindowsInstaller
                     {
                         // Avoid creating unnecessary Record objects by not calling View.Fetch().
                         int recordHandle;
-                        uint ret = RemotableNativeMethods.MsiViewFetch((int)view.Handle, out recordHandle);
+                        uint ret = NativeMethods.MsiViewFetch((int)view.Handle, out recordHandle);
                         if (ret == (uint)NativeMethods.Error.NO_MORE_ITEMS)
                         {
                             break;
@@ -542,7 +537,7 @@ namespace IsWiX.WindowsInstaller
                             throw InstallerException.ExceptionFromReturnCode(ret);
                         }
 
-                        RemotableNativeMethods.MsiCloseHandle(recordHandle);
+                        NativeMethods.MsiCloseHandle(recordHandle);
                     }
                 }
             }
@@ -801,7 +796,7 @@ namespace IsWiX.WindowsInstaller
         /// </p></remarks>
         public Record CreateRecord(int fieldCount)
         {
-            int hRecord = RemotableNativeMethods.MsiCreateRecord((uint) fieldCount, (int) this.Handle);
+            int hRecord = NativeMethods.MsiCreateRecord((uint) fieldCount);
             return new Record((IntPtr) hRecord, true, (View) null);
         }
 

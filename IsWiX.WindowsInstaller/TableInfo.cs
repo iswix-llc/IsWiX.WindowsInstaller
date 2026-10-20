@@ -241,7 +241,7 @@ namespace IsWiX.WindowsInstaller
             else
             {
                 int hrec;
-                uint ret = RemotableNativeMethods.MsiDatabaseGetPrimaryKeys(
+                uint ret = NativeMethods.MsiDatabaseGetPrimaryKeys(
                     (int) db.Handle, table, out hrec);
                 if (ret != 0)
                 {

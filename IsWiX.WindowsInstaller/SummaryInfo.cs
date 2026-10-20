@@ -425,7 +425,7 @@ namespace IsWiX.WindowsInstaller
                 int intValue;
                 long timeValue = 0;
 
-                uint ret = RemotableNativeMethods.MsiSummaryInfoGetProperty(
+                uint ret = NativeMethods.MsiSummaryInfoGetProperty(
                     (int) this.Handle,
                     property,
                     out dataType,
@@ -465,7 +465,7 @@ namespace IsWiX.WindowsInstaller
                         if (ret == (uint) NativeMethods.Error.MORE_DATA)
                         {
                             stringValue.Capacity = (int) ++bufSize;
-                            ret = RemotableNativeMethods.MsiSummaryInfoGetProperty(
+                            ret = NativeMethods.MsiSummaryInfoGetProperty(
                                 (int) this.Handle,
                                 property,
                                 out dataType,
@@ -589,7 +589,7 @@ namespace IsWiX.WindowsInstaller
         {
             int summaryInfoHandle;
             int maxProperties = !enableWrite ? 0 : SummaryInfo.MAX_PROPERTIES;
-            uint ret = RemotableNativeMethods.MsiGetSummaryInformation(
+            uint ret = NativeMethods.MsiGetSummaryInformation(
                 0,
                 packagePath,
                 (uint) maxProperties,

@@ -64,7 +64,7 @@ namespace IsWiX.WindowsInstaller
             {
                 byte[] readBuffer = (offset == 0 ? buffer : new byte[count]);
                 uint ucount = (uint) count;
-                uint ret = RemotableNativeMethods.MsiRecordReadStream((int) this.record.Handle, (uint) this.field, buffer, ref ucount);
+                uint ret = NativeMethods.MsiRecordReadStream((int) this.record.Handle, (uint) this.field, readBuffer, ref ucount);
                 if (ret != 0)
                 {
                     throw InstallerException.ExceptionFromReturnCode(ret);

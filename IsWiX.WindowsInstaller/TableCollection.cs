@@ -107,7 +107,7 @@ namespace IsWiX.WindowsInstaller
             {
                 throw new ArgumentNullException("item");
             }
-            uint ret = RemotableNativeMethods.MsiDatabaseIsTablePersistent((int) this.db.Handle, item);
+            uint ret = NativeMethods.MsiDatabaseIsTablePersistent((int) this.db.Handle, item);
             if (ret == 3)  // MSICONDITION_ERROR
             {
                 throw new InstallerException();

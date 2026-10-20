@@ -156,7 +156,7 @@ namespace IsWiX.WindowsInstaller
         [SuppressMessage("Microsoft.Naming", "CA1704:IdentifiersShouldBeSpelledCorrectly", MessageId = "Params"), SuppressMessage("Microsoft.Design", "CA1011:ConsiderPassingBaseTypesAsParameters")]
         public void Execute(Record executeParams)
         {
-            uint ret = RemotableNativeMethods.MsiViewExecute(
+            uint ret = NativeMethods.MsiViewExecute(
                 (int) this.Handle,
                 (executeParams != null ? (int) executeParams.Handle : 0));
             if (ret == (uint) NativeMethods.Error.BAD_QUERY_SYNTAX)
@@ -196,7 +196,7 @@ namespace IsWiX.WindowsInstaller
         public Record Fetch()
         {
             int recordHandle;
-            uint ret = RemotableNativeMethods.MsiViewFetch((int) this.Handle, out recordHandle);
+            uint ret = NativeMethods.MsiViewFetch((int) this.Handle, out recordHandle);
             if (ret == (uint) NativeMethods.Error.NO_MORE_ITEMS)
             {
                 return null;
@@ -261,7 +261,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("record");
             }
 
-            uint ret = RemotableNativeMethods.MsiViewModify((int) this.Handle, (int) mode, (int) record.Handle);
+            uint ret = NativeMethods.MsiViewModify((int) this.Handle, (int) mode, (int) record.Handle);
             if (mode == ViewModifyMode.Insert || mode == ViewModifyMode.InsertTemporary)
             {
                 record.IsFormatStringInvalid = true;
@@ -418,7 +418,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("record");
             }
 
-            uint ret = RemotableNativeMethods.MsiViewModify((int) this.Handle, (int) ViewModifyMode.Seek, (int) record.Handle);
+            uint ret = NativeMethods.MsiViewModify((int) this.Handle, (int) ViewModifyMode.Seek, (int) record.Handle);
             record.IsFormatStringInvalid = true;
             if (ret == (uint) NativeMethods.Error.FUNCTION_FAILED)
             {
@@ -457,7 +457,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("record");
             }
 
-            uint ret = RemotableNativeMethods.MsiViewModify((int) this.Handle, (int) ViewModifyMode.Merge, (int) record.Handle);
+            uint ret = NativeMethods.MsiViewModify((int) this.Handle, (int) ViewModifyMode.Merge, (int) record.Handle);
             if (ret == (uint) NativeMethods.Error.FUNCTION_FAILED)
             {
                 return false;
@@ -565,7 +565,7 @@ namespace IsWiX.WindowsInstaller
 
         private ICollection<ValidationErrorInfo> InternalValidate(ViewModifyMode mode, Record record)
         {
-            uint ret = RemotableNativeMethods.MsiViewModify((int) this.Handle, (int) mode, (int) record.Handle);
+            uint ret = NativeMethods.MsiViewModify((int) this.Handle, (int) mode, (int) record.Handle);
             if (ret == (uint) NativeMethods.Error.INVALID_DATA)
             {
                 ICollection<ValidationErrorInfo> errorInfo = new List<ValidationErrorInfo>();
@@ -573,11 +573,11 @@ namespace IsWiX.WindowsInstaller
                 {
                     uint bufSize = 40;
                     StringBuilder column = new StringBuilder("", (int) bufSize);
-                    int error = RemotableNativeMethods.MsiViewGetError((int) this.Handle, column, ref bufSize);
+                    int error = NativeMethods.MsiViewGetError((int) this.Handle, column, ref bufSize);
                     if (error == -2 /*MSIDBERROR_MOREDATA*/)
                     {
                         column.Capacity = (int) ++bufSize;
-                        error = RemotableNativeMethods.MsiViewGetError((int) this.Handle, column, ref bufSize);
+                        error = NativeMethods.MsiViewGetError((int) this.Handle, column, ref bufSize);
                     }
                     
                     if (error == -3 /*MSIDBERROR_INVALIDARG*/)

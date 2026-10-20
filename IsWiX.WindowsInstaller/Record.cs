@@ -50,7 +50,7 @@ namespace IsWiX.WindowsInstaller
         /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msicreaterecord.asp">MsiCreateRecord</a>
         /// </p></remarks>
         public Record(int fieldCount)
-            : this((IntPtr) RemotableNativeMethods.MsiCreateRecord((uint) fieldCount, 0), true, (View) null)
+            : this((IntPtr) NativeMethods.MsiCreateRecord((uint) fieldCount), true, (View) null)
         {
         }
 
@@ -92,7 +92,7 @@ namespace IsWiX.WindowsInstaller
         {
             get
             {
-                return (int) RemotableNativeMethods.MsiRecordGetFieldCount((int) this.Handle);
+                return (int) NativeMethods.MsiRecordGetFieldCount((int) this.Handle);
             }
         }
 
@@ -255,7 +255,7 @@ namespace IsWiX.WindowsInstaller
         /// </p></remarks>
         public void Clear()
         {
-            uint ret = RemotableNativeMethods.MsiRecordClearData((int) this.Handle);
+            uint ret = NativeMethods.MsiRecordClearData((int) this.Handle);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -276,7 +276,7 @@ namespace IsWiX.WindowsInstaller
         public bool IsNull(int field)
         {
             this.CheckRange(field);
-            return RemotableNativeMethods.MsiRecordIsNull((int) this.Handle, (uint) field);
+            return NativeMethods.MsiRecordIsNull((int) this.Handle, (uint) field);
         }
 
         /// <summary>
@@ -315,7 +315,7 @@ namespace IsWiX.WindowsInstaller
         public int GetDataSize(int field)
         {
             this.CheckRange(field);
-            return (int) RemotableNativeMethods.MsiRecordDataSize((int) this.Handle, (uint) field);
+            return (int) NativeMethods.MsiRecordDataSize((int) this.Handle, (uint) field);
         }
 
         /// <summary>
@@ -358,7 +358,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            int value = RemotableNativeMethods.MsiRecordGetInteger((int) this.Handle, (uint) field);
+            int value = NativeMethods.MsiRecordGetInteger((int) this.Handle, (uint) field);
             if (value == Int32.MinValue)  // MSI_NULL_INTEGER
             {
                 return 0;
@@ -397,7 +397,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            int value = RemotableNativeMethods.MsiRecordGetInteger((int) this.Handle, (uint) field);
+            int value = NativeMethods.MsiRecordGetInteger((int) this.Handle, (uint) field);
             if (value == Int32.MinValue)  // MSI_NULL_INTEGER
             {
                 return null;
@@ -435,7 +435,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            uint ret = RemotableNativeMethods.MsiRecordSetInteger((int) this.Handle, (uint) field, value);
+            uint ret = NativeMethods.MsiRecordSetInteger((int) this.Handle, (uint) field, value);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -472,7 +472,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            uint ret = RemotableNativeMethods.MsiRecordSetInteger(
+            uint ret = NativeMethods.MsiRecordSetInteger(
                 (int) this.Handle,
                 (uint) field,
                 value.HasValue ? (int) value : Int32.MinValue);
@@ -513,11 +513,11 @@ namespace IsWiX.WindowsInstaller
 
             StringBuilder buf = new StringBuilder(String.Empty);
             uint bufSize = 0;
-            uint ret = RemotableNativeMethods.MsiRecordGetString((int) this.Handle, (uint) field, buf, ref bufSize);
+            uint ret = NativeMethods.MsiRecordGetString((int) this.Handle, (uint) field, buf, ref bufSize);
             if (ret == (uint) NativeMethods.Error.MORE_DATA)
             {
                 buf.Capacity = (int) ++bufSize;
-                ret = RemotableNativeMethods.MsiRecordGetString((int) this.Handle, (uint) field, buf, ref bufSize);
+                ret = NativeMethods.MsiRecordGetString((int) this.Handle, (uint) field, buf, ref bufSize);
             }
             if (ret != 0)
             {
@@ -559,7 +559,7 @@ namespace IsWiX.WindowsInstaller
                 value = String.Empty;
             }
 
-            uint ret = RemotableNativeMethods.MsiRecordSetString((int) this.Handle, (uint) field, value);
+            uint ret = NativeMethods.MsiRecordSetString((int) this.Handle, (uint) field, value);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -744,7 +744,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("filePath");
             }
 
-            uint ret = RemotableNativeMethods.MsiRecordSetStream((int) this.Handle, (uint) field, filePath);
+            uint ret = NativeMethods.MsiRecordSetStream((int) this.Handle, (uint) field, filePath);
             if (ret != 0)
             {
                 throw InstallerException.ExceptionFromReturnCode(ret);
@@ -792,7 +792,7 @@ namespace IsWiX.WindowsInstaller
 
             if (stream == null)
             {
-                uint ret = RemotableNativeMethods.MsiRecordSetStream((int) this.Handle, (uint) field, null);
+                uint ret = NativeMethods.MsiRecordSetStream((int) this.Handle, (uint) field, null);
                 if (ret != 0)
                 {
                     throw InstallerException.ExceptionFromReturnCode(ret);
@@ -814,7 +814,7 @@ namespace IsWiX.WindowsInstaller
                     writeStream.Close();
                     writeStream = null;
 
-                    uint ret = RemotableNativeMethods.MsiRecordSetStream((int) this.Handle, (uint) field, tempPath);
+                    uint ret = NativeMethods.MsiRecordSetStream((int) this.Handle, (uint) field, tempPath);
                     if (ret != 0)
                     {
                         throw InstallerException.ExceptionFromReturnCode(ret);
@@ -900,12 +900,12 @@ namespace IsWiX.WindowsInstaller
             int sessionHandle = session != null ? (int) session.Handle : 0;
             StringBuilder buf = new StringBuilder(String.Empty);
             uint bufSize = 1;
-            uint ret = RemotableNativeMethods.MsiFormatRecord(sessionHandle, (int) this.Handle, buf, ref bufSize);
+            uint ret = NativeMethods.MsiFormatRecord(sessionHandle, (int) this.Handle, buf, ref bufSize);
             if (ret == (uint) NativeMethods.Error.MORE_DATA)
             {
                 bufSize++;
                 buf = new StringBuilder((int) bufSize);
-                ret = RemotableNativeMethods.MsiFormatRecord(sessionHandle, (int) this.Handle, buf, ref bufSize);
+                ret = NativeMethods.MsiFormatRecord(sessionHandle, (int) this.Handle, buf, ref bufSize);
             }
             if (ret != 0)
             {

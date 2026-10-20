@@ -301,7 +301,7 @@ namespace IsWiX.WindowsInstaller
         {
             int recordHandle;
             int typesFlag = types ? 1 : 0;
-            uint ret = RemotableNativeMethods.MsiViewGetColumnInfo(
+            uint ret = NativeMethods.MsiViewGetColumnInfo(
                 (int) view.Handle, (uint) typesFlag, out recordHandle);
             if (ret != 0)
             {
@@ -319,7 +319,7 @@ namespace IsWiX.WindowsInstaller
                 {
                     uint bufSize = 256;
                     StringBuilder buf = new StringBuilder((int) bufSize);
-                    ret = RemotableNativeMethods.MsiRecordGetString((int) rec.Handle, (uint) field, buf, ref bufSize);
+                    ret = NativeMethods.MsiRecordGetString((int) rec.Handle, (uint) field, buf, ref bufSize);
                     if (ret != 0)
                     {
                         throw InstallerException.ExceptionFromReturnCode(ret);

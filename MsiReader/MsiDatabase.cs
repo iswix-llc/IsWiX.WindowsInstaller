@@ -82,6 +82,9 @@ public sealed class MsiDatabase : IDisposable
     /// <summary>Names of the non-table streams, such as binary data and the summary information.</summary>
     public IReadOnlyCollection<string> StreamNames => _plainStreams.Keys;
 
+    /// <summary>The Windows code page that the database strings are stored in.</summary>
+    public int CodePage => _strings.CodePage;
+
     /// <summary>Returns true if the database contains a table with this name.</summary>
     public bool ContainsTable(string name) => _tableNames.Contains(name, StringComparer.OrdinalIgnoreCase);
 
