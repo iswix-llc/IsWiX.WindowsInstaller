@@ -28,6 +28,7 @@
     <None Include="..\MsiReader.Tests\fixtures\test-multi.mst" Link="fixtures\test-multi.mst" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\MsiReader.Tests\fixtures\test-twotables.mst" Link="fixtures\test-twotables.mst" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\MsiReader.Tests\fixtures\test-newtable.mst" Link="fixtures\test-newtable.mst" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\MsiReader.Tests\fixtures\test-null.mst" Link="fixtures\test-null.mst" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

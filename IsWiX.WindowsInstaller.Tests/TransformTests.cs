@@ -125,6 +125,24 @@ public class TransformTests : IDisposable
     }
 
     [Fact]
+    public void NullTransformClearsTemplateLikeWindows()
+    {
+        string path = CopyOfBase();
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            db.ApplyTransform(TestFixtures.Path("test-null.mst"));
+            db.Commit();
+        }
+
+        using var check = new Database(path);
+        using View view = check.OpenView("SELECT `Action`, `Template` FROM `ActionText` WHERE `Action` = 'InstallFiles'");
+        view.Execute();
+        Record? row = view.Fetch();
+        Assert.NotNull(row);
+        Assert.True(row!.IsNull(2));
+    }
+
+    [Fact]
     public void TransformOnReadOnlyDatabaseFails()
     {
         using var db = new Database(CopyOfBase());

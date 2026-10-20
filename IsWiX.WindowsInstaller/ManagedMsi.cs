@@ -509,79 +509,114 @@ namespace IsWiX.WindowsInstaller
 
         /// <summary>
         /// Plans the changes for one transform table stream. The stream is a sequence of rows of 2-byte words.
-        /// A header of 0 deletes the row and is followed by its key. A header with bit 0x0200 inserts the row,
-        /// and a header of 2 modifies the Value column of the row with that key. Insert and modify rows are
-        /// followed by the key and the value. Only this layout is supported, because it is the one checked
-        /// against Windows Installer output. Other layouts are rejected before the database changes.
+        /// A header of 0 deletes the row and is followed by its key. A header with bit 0x0200 inserts a row of a
+        /// two-string-column table: the key and the value follow. Any other header modifies the row with that key:
+        /// bit i of the header marks column i, and one value word follows for each marked column, in column order.
+        /// Only string columns of tables with a single-column key are modified. Other layouts are rejected before
+        /// the database changes.
         /// </summary>
         private static List<Action> PlanRows(MutableTable table, byte[] data, MsiTransform transform)
         {
-            bool twoStringColumns = table.Columns.Count == 2
-                && table.Columns[0].Type == MsiColumnType.String
-                && table.Columns[1].Type == MsiColumnType.String;
-            if (!twoStringColumns)
-            {
-                throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
-            }
-
             var changes = new List<Action>();
             int position = 0;
             while (position < data.Length)
             {
-                if (position + 2 > data.Length)
+                if (position + 4 > data.Length)
                 {
                     throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
                 }
                 int header = ReadWord(data, position);
+                string? key = TransformString(data, position + 2, transform);
 
                 if (header == 0)
                 {
-                    string? key = TransformString(data, position + 2, transform);
                     position += 4;
-                    changes.Add(() =>
-                    {
-                        int index = table.FindByKey(new object?[] { key });
-                        if (index < 0)
-                        {
-                            throw MutableTable.Failed();
-                        }
-                        table.RemoveAt(index);
-                    });
+                    changes.Add(() => table.RemoveAt(RequireRow(table, key)));
                     continue;
                 }
 
-                if (position + 6 > data.Length)
-                {
-                    throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
-                }
-                string? rowKey = TransformString(data, position + 2, transform);
-                string? value = TransformString(data, position + 4, transform);
-                position += 6;
-
                 if ((header & 0x0200) != 0)
                 {
-                    changes.Add(() => table.Insert(new object?[] { rowKey, value }));
-                }
-                else if (header == 2)
-                {
-                    changes.Add(() =>
+                    RequireTwoStringColumns(table);
+                    if (position + 6 > data.Length)
                     {
-                        int index = table.FindByKey(new object?[] { rowKey });
-                        if (index < 0)
-                        {
-                            throw MutableTable.Failed();
-                        }
-                        object?[] row = (object?[]) table.Rows[index].Clone();
-                        row[1] = value;
-                        table.Update(new[] { (index, row) });
-                    });
+                        throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                    }
+                    string? value = TransformString(data, position + 4, transform);
+                    position += 6;
+                    changes.Add(() => table.Insert(new object?[] { key, value }));
+                    continue;
                 }
-                else
+
+                if ((header & 0x0001) != 0 || (header & 0xFE00) != 0 || !HasSingleKey(table))
                 {
                     throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
                 }
+                var columns = new List<int>();
+                for (int bit = 1; bit < 16; bit++)
+                {
+                    if ((header & (1 << bit)) != 0)
+                    {
+                        columns.Add(bit);
+                    }
+                }
+                foreach (int column in columns)
+                {
+                    if (column >= table.Columns.Count || table.Columns[column].Type != MsiColumnType.String)
+                    {
+                        throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                    }
+                }
+                int end = position + 4 + 2 * columns.Count;
+                if (columns.Count == 0 || end > data.Length)
+                {
+                    throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                }
+                var values = new string?[columns.Count];
+                for (int n = 0; n < columns.Count; n++)
+                {
+                    values[n] = TransformString(data, position + 4 + 2 * n, transform);
+                }
+                position = end;
+                changes.Add(() =>
+                {
+                    int index = RequireRow(table, key);
+                    object?[] row = (object?[]) table.Rows[index].Clone();
+                    for (int n = 0; n < columns.Count; n++)
+                    {
+                        row[columns[n]] = values[n];
+                    }
+                    table.Update(new[] { (index, row) });
+                });
             }
             return changes;
+        }
+
+        /// <summary>The index of the row with the given key. A key that is not in the table fails the transform.</summary>
+        private static int RequireRow(MutableTable table, string? key)
+        {
+            int index = table.FindByKey(new object?[] { key });
+            if (index < 0)
+            {
+                throw MutableTable.Failed();
+            }
+            return index;
+        }
+
+        private static bool HasSingleKey(MutableTable table)
+        {
+            return table.Columns.Count > 0 && table.Columns[0].IsPrimaryKey && table.Columns.Count(c => c.IsPrimaryKey) == 1;
+        }
+
+        private static void RequireTwoStringColumns(MutableTable table)
+        {
+            bool ok = table.Columns.Count == 2
+                && table.Columns[0].Type == MsiColumnType.String
+                && table.Columns[1].Type == MsiColumnType.String;
+            if (!ok)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+            }
         }
 
         private static int ReadWord(byte[] data, int position)
