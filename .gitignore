@@ -430,3 +430,5 @@ FodyWeavers.xsd
 # Format tests
 !IsWiX.WindowsInstaller.Tests/fixtures/basic.msi
 IsWiX.WindowsInstaller.Tests/fixtures/generated/
+
+!IsWiX.WindowsInstaller.Tests/fixtures/test-base.msi
