@@ -8,10 +8,10 @@ namespace IsWiX.WindowsInstaller.Tests;
 /// Shared fixture that opens the large generated database once. The file is made by
 /// fixtures/generate.sh; if it is missing, these tests are skipped.
 /// </summary>
-internal sealed class StressDatabase : IDisposable
+public sealed class StressDatabase : IDisposable
 {
     public const string Path = "generated/stress.msi";
-    public MsiDatabase? Db { get; }
+    internal MsiDatabase? Db { get; }
 
     public StressDatabase()
     {
@@ -28,7 +28,7 @@ internal sealed class StressDatabase : IDisposable
 /// references, a string over 64 KB, a regular 9 MB stream that needs a DIFAT chain,
 /// and a mini stream.
 /// </summary>
-internal class StressDatabaseTests : IClassFixture<StressDatabase>
+public class StressDatabaseTests : IClassFixture<StressDatabase>
 {
     private readonly StressDatabase _fixture;
 
