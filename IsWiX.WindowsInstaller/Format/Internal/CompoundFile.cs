@@ -34,6 +34,8 @@ internal sealed class CompoundFile
     /// <summary>All stream entries in the file, keyed by their raw (UTF-16) name.</summary>
     public IReadOnlyList<DirectoryEntry> Streams { get; }
 
+    private readonly List<(byte Type, uint Left, uint Right, uint Child, DirectoryEntry Entry)> _directory = new();
+
     public CompoundFile(Stream stream)
     {
         _stream = stream ?? throw new ArgumentNullException(nameof(stream));
@@ -92,14 +94,14 @@ internal sealed class CompoundFile
 
         // Read the directory and locate the root entry, which holds the mini stream.
         var dirBytes = ReadChain(firstDirSector, _fat, _sectorSize, long.MaxValue);
-        var entries2 = new List<DirectoryEntry>();
-        RootEntry? root = null;
+        // Directory entries are in a red-black tree rooted at the root entry's child.
+        // Entries outside that tree (left behind by an earlier save) are not part of the
+        // file and must be ignored, or a stale copy of a stream can shadow the live one.
+        var dirs = new List<(byte Type, uint Left, uint Right, uint Child, DirectoryEntry Entry)>();
         for (int off = 0; off + DirEntrySize <= dirBytes.Length; off += DirEntrySize)
         {
             var e = dirBytes.AsSpan(off, DirEntrySize);
             byte type = e[66];
-            if (type == 0) continue; // unused slot
-
             ushort nameLen = BinaryPrimitives.ReadUInt16LittleEndian(e[64..]);
             string name = nameLen >= 2
                 ? Encoding.Unicode.GetString(e[..Math.Min(nameLen - 2, 64)])
@@ -108,11 +110,39 @@ internal sealed class CompoundFile
             long size = _majorVersion == 3
                 ? BinaryPrimitives.ReadUInt32LittleEndian(e[120..])
                 : (long)BinaryPrimitives.ReadUInt64LittleEndian(e[120..]);
+            dirs.Add((type,
+                      BinaryPrimitives.ReadUInt32LittleEndian(e[68..]),
+                      BinaryPrimitives.ReadUInt32LittleEndian(e[72..]),
+                      BinaryPrimitives.ReadUInt32LittleEndian(e[76..]),
+                      new DirectoryEntry(name, start, size)));
+        }
 
-            if (type == 5 && root is null)
-                root = new RootEntry(start, size);
-            else if (type == 2)
-                entries2.Add(new DirectoryEntry(name, start, size));
+        RootEntry? root = null;
+        if (dirs.Count > 0 && dirs[0].Type == 5)
+            root = new RootEntry(dirs[0].Entry.Start, dirs[0].Entry.Size);
+
+        _directory = dirs.Select(d => (d.Type, d.Left, d.Right, d.Child, d.Entry)).ToList();
+
+        var entries2 = new List<DirectoryEntry>();
+        if (dirs.Count > 0 && dirs[0].Type == 5)
+        {
+            const uint NoStream = 0xFFFFFFFF;
+            var visited = new HashSet<uint>();
+            var pending = new Stack<uint>();
+            pending.Push(dirs[0].Child);
+            while (pending.Count > 0)
+            {
+                uint id = pending.Pop();
+                if (id == NoStream || id >= dirs.Count || !visited.Add(id))
+                    continue;
+                var d = dirs[(int)id];
+                pending.Push(d.Left);
+                pending.Push(d.Right);
+                if (d.Type == 2)
+                    entries2.Add(d.Entry);
+                else if (d.Type == 1)
+                    pending.Push(d.Child);
+            }
         }
 
         _miniStream = root is { } r && r.Size > 0
@@ -130,6 +160,42 @@ internal sealed class CompoundFile
         _miniFat = miniFat.ToArray();
 
         Streams = entries2;
+    }
+
+    /// <summary>
+    /// Finds a stream by name the way the format does: a search down the red-black tree
+    /// under the root entry, ordering names by length and then by uppercase value. If a
+    /// name appears more than once, the first entry the search reaches is returned.
+    /// </summary>
+    public bool TryFind(string name, out DirectoryEntry entry)
+    {
+        const uint NoStream = 0xFFFFFFFF;
+        entry = default!;
+        if (_directory.Count == 0 || _directory[0].Type != 5)
+            return false;
+
+        uint id = _directory[0].Child;
+        for (int steps = 0; id != NoStream && id < _directory.Count && steps <= _directory.Count; steps++)
+        {
+            var node = _directory[(int)id];
+            int cmp = CompareNames(name, node.Entry.RawName);
+            if (cmp == 0)
+            {
+                if (node.Type != 2)
+                    return false;
+                entry = node.Entry;
+                return true;
+            }
+            id = cmp < 0 ? node.Left : node.Right;
+        }
+        return false;
+    }
+
+    private static int CompareNames(string a, string b)
+    {
+        if (a.Length != b.Length)
+            return a.Length.CompareTo(b.Length);
+        return string.CompareOrdinal(a.ToUpperInvariant(), b.ToUpperInvariant());
     }
 
     /// <summary>Reads the full contents of a stream entry.</summary>

@@ -12,7 +12,6 @@ internal sealed class MsiDatabase : IDisposable
 {
     private readonly CompoundFile _file;
     private readonly StringPool _strings;
-    private readonly Dictionary<string, CompoundFile.DirectoryEntry> _tableStreams;
     private readonly Dictionary<string, CompoundFile.DirectoryEntry> _plainStreams;
     private readonly Dictionary<string, List<MsiColumn>> _columns;
     private readonly Dictionary<string, MsiTable> _tableCache = new(StringComparer.OrdinalIgnoreCase);
@@ -26,17 +25,14 @@ internal sealed class MsiDatabase : IDisposable
         _ownsStream = ownsStream;
         _file = new CompoundFile(stream);
 
-        _tableStreams = new Dictionary<string, CompoundFile.DirectoryEntry>(StringComparer.Ordinal);
         _plainStreams = new Dictionary<string, CompoundFile.DirectoryEntry>(StringComparer.Ordinal);
         foreach (var entry in _file.Streams)
         {
-            if (StreamNameCodec.TryGetTableName(entry.RawName, out var table))
-                _tableStreams[table] = entry;
-            else
-                _plainStreams[StreamNameCodec.Decode(entry.RawName)] = entry;
+            if (!StreamNameCodec.TryGetTableName(entry.RawName, out _))
+                _plainStreams.TryAdd(StreamNameCodec.Decode(entry.RawName), entry);
         }
 
-        if (!_tableStreams.ContainsKey("_Tables") || !_tableStreams.ContainsKey("_Columns"))
+        if (TableStream("_Tables") is null || TableStream("_Columns") is null)
             throw new MsiFormatException("The file is missing _Tables or _Columns; it is not an MSI database.");
 
         _strings = LoadStringPool();
@@ -130,11 +126,16 @@ internal sealed class MsiDatabase : IDisposable
 
     // ---- Loading -------------------------------------------------------------
 
+    /// <summary>The stream holding a table, found through the directory tree, or null.</summary>
+    private CompoundFile.DirectoryEntry? TableStream(string table) =>
+        _file.TryFind(StreamNameCodec.TablePrefix + StreamNameCodec.Encode(table), out var entry) ? entry : null;
+
     private StringPool LoadStringPool()
     {
-        if (!_tableStreams.TryGetValue("_StringPool", out var poolEntry))
+        var poolEntry = TableStream("_StringPool");
+        if (poolEntry is null)
             return StringPool.Empty;
-        _tableStreams.TryGetValue("_StringData", out var dataEntry);
+        var dataEntry = TableStream("_StringData");
         return StringPool.Load(
             _file.ReadStream(poolEntry),
             dataEntry is null ? Array.Empty<byte>() : _file.ReadStream(dataEntry));
@@ -215,7 +216,8 @@ internal sealed class MsiDatabase : IDisposable
     {
         int bpr = _strings.BytesPerRef;
         int rowSize = cols.Sum(c => c.StorageWidth(bpr));
-        if (!_tableStreams.TryGetValue(tableName, out var entry))
+        var entry = TableStream(tableName);
+        if (entry is null)
             return new RawTable(Array.Empty<RawRow>());
 
         var data = _file.ReadStream(entry);

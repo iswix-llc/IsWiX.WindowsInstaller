@@ -432,3 +432,4 @@ FodyWeavers.xsd
 IsWiX.WindowsInstaller.Tests/fixtures/generated/
 
 !IsWiX.WindowsInstaller.Tests/fixtures/test-base.msi
+!IsWiX.WindowsInstaller.Tests/fixtures/WinDirStat-2.9.3-x64.msi
