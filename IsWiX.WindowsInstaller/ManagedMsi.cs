@@ -7,6 +7,7 @@ namespace IsWiX.WindowsInstaller
     using System.Globalization;
     using System.IO;
     using System.Linq;
+    using System.Text;
     using MsiReader;
 
     /// <summary>Carries a Windows Installer error code out of a managed operation.</summary>
@@ -93,6 +94,7 @@ namespace IsWiX.WindowsInstaller
         private bool dirty;
         private readonly List<string> addedTables = new List<string>();
         private readonly List<string> removedTables = new List<string>();
+        private int? codePageOverride;
         private readonly Dictionary<string, long> newKeyRanks = new Dictionary<string, long>(StringComparer.Ordinal);
         private const long NewStringBase = 1L << 32;
 
@@ -290,7 +292,7 @@ namespace IsWiX.WindowsInstaller
                 streams[pending.Key] = pending.Value;
             }
 
-            int codePage = this.reader.CodePage;
+            int codePage = this.CodePage;
             string directory = Path.GetDirectoryName(Path.GetFullPath(this.path)) ?? ".";
             string temp = Path.Combine(directory, "." + Path.GetFileName(this.path) + "." + Guid.NewGuid().ToString("N") + ".tmp");
             bool moved = false;
@@ -773,7 +775,7 @@ namespace IsWiX.WindowsInstaller
             string text;
             if (table == "_ForceCodepage")
             {
-                text = "CodePage\r\ni2\r\n" + this.reader.CodePage.ToString(CultureInfo.InvariantCulture) + "\r\n";
+                text = "CodePage\r\ni2\r\n" + this.CodePage.ToString(CultureInfo.InvariantCulture) + "\r\n";
             }
             else
             {
@@ -809,6 +811,17 @@ namespace IsWiX.WindowsInstaller
             if (lines.Length < 3)
             {
                 throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
+            }
+            if (lines[0].Length == 0 && lines[1].Length == 0)
+            {
+                // The code page form: two empty header lines, then "<code page>\t_ForceCodepage".
+                string[] record = lines[2].Split('\t');
+                if (record.Length == 2 && record[1] == "_ForceCodepage"
+                    && int.TryParse(record[0], NumberStyles.None, CultureInfo.InvariantCulture, out int codePage))
+                {
+                    this.SetCodePage(codePage);
+                    return;
+                }
             }
             string[] names = lines[0].Split('\t');
             string[] types = lines[1].Split('\t');
@@ -855,6 +868,33 @@ namespace IsWiX.WindowsInstaller
             }
 
             this.PutTable(table);
+            this.Changed();
+        }
+
+        /// <summary>The database code page. A value set here replaces the file's when the database is committed.</summary>
+        public int CodePage => this.codePageOverride ?? this.reader.CodePage;
+
+        /// <summary>Sets the database code page. Strings are written in it on Commit.</summary>
+        public void SetCodePage(int codePage)
+        {
+            this.RequireWritable();
+            if (codePage < 0 || codePage > 0xFFFF)
+            {
+                throw new MsiErrorException((uint) NativeMethods.Error.INVALID_PARAMETER);
+            }
+            if (codePage != 0)
+            {
+                try
+                {
+                    Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+                    Encoding.GetEncoding(codePage);
+                }
+                catch (ArgumentException)
+                {
+                    throw new MsiErrorException((uint) NativeMethods.Error.INVALID_PARAMETER);
+                }
+            }
+            this.codePageOverride = codePage;
             this.Changed();
         }
 

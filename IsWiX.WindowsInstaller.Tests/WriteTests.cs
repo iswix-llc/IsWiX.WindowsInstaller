@@ -153,6 +153,21 @@ public class WriteTests : IDisposable
     }
 
     [Fact]
+    public void CodePageSetterIsWrittenOnCommit()
+    {
+        string path = CopyOfFixture();
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            db.CodePage = 1251;
+            Assert.Equal(1251, db.CodePage);
+            db.Commit();
+        }
+
+        using var reopened = new Database(path);
+        Assert.Equal(1251, reopened.CodePage);
+    }
+
+    [Fact]
     public void DirectModeWritesWithoutCommit()
     {
         string path = CopyOfFixture();
