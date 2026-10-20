@@ -152,10 +152,8 @@ public class TransformTests : IDisposable
             db.Commit();
         }
 
-        // Windows keeps rows in key-pool order and the shim appends new rows, so compare the rows as sets.
         using var check = new Database(path);
-        Assert.Equal(AddRemoveRows.OrderBy(r => r, StringComparer.Ordinal),
-            PropertyRows(check).OrderBy(r => r, StringComparer.Ordinal));
+        Assert.Equal(AddRemoveRows, PropertyRows(check));
     }
 
     [Fact]

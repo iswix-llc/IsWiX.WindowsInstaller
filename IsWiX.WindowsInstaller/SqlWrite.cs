@@ -74,6 +74,18 @@ namespace IsWiX.WindowsInstaller
             this.Rows.Add(row);
         }
 
+        /// <summary>Inserts a row at the given index. The row is checked like <see cref="Insert"/>.</summary>
+        public void InsertAt(int index, object?[] row)
+        {
+            this.Validate(row);
+            this.EnsureKeys();
+            if (!this.keys!.Add(this.KeyOf(row)))
+            {
+                throw Failed();
+            }
+            this.Rows.Insert(index, row);
+        }
+
         /// <summary>Replaces rows at the given indexes. All rows are checked before any of them is stored.</summary>
         public void Update(IReadOnlyList<(int Index, object?[] Row)> changes)
         {

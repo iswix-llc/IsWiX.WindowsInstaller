@@ -28,6 +28,24 @@ internal sealed class StringPool
 
     public static StringPool Empty { get; } = new(new string?[1], 2, 1252);
 
+    private Dictionary<string, uint>? _ids;
+
+    /// <summary>The index of the first entry with this text, or null if the pool has no such string.</summary>
+    public uint? IdOf(string text)
+    {
+        if (_ids == null)
+        {
+            var ids = new Dictionary<string, uint>(StringComparer.Ordinal);
+            for (uint id = 1; id < _strings.Length; id++)
+            {
+                if (_strings[id] is string entry)
+                    ids.TryAdd(entry, id);
+            }
+            _ids = ids;
+        }
+        return _ids.TryGetValue(text, out uint found) ? found : null;
+    }
+
     public string? this[uint id]
     {
         get

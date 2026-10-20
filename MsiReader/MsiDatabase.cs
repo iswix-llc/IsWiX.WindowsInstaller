@@ -85,6 +85,9 @@ public sealed class MsiDatabase : IDisposable
     /// <summary>The Windows code page that the database strings are stored in.</summary>
     public int CodePage => _strings.CodePage;
 
+    /// <summary>The string pool index of a string in the file, or null if the file's pool does not have it.</summary>
+    public uint? StringIdOf(string text) => _strings.IdOf(text);
+
     /// <summary>Returns true if the database contains a table with this name.</summary>
     public bool ContainsTable(string name) => _tableNames.Contains(name, StringComparer.OrdinalIgnoreCase);
 

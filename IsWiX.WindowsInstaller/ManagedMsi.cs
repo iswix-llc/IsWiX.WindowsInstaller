@@ -93,6 +93,8 @@ namespace IsWiX.WindowsInstaller
         private bool dirty;
         private readonly List<string> addedTables = new List<string>();
         private readonly List<string> removedTables = new List<string>();
+        private readonly Dictionary<string, long> newKeyRanks = new Dictionary<string, long>(StringComparer.Ordinal);
+        private const long NewStringBase = 1L << 32;
 
         private ManagedDatabase(MsiDatabase reader, string path, DatabaseMode mode)
         {
@@ -393,7 +395,7 @@ namespace IsWiX.WindowsInstaller
                     MutableTable table = this.GetUserTable(stream.Key)
                         ?? (newTables.TryGetValue(stream.Key, out MutableTable? defined) ? defined : null)
                         ?? throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
-                    changes.AddRange(PlanRows(table, stream.Value, transform));
+                    changes.AddRange(PlanRows(table, stream.Value, transform, this.reader, this.newKeyRanks));
                 }
 
                 foreach (string name in deletedTables)
@@ -535,6 +537,59 @@ namespace IsWiX.WindowsInstaller
             this.addedTables.Add(table.Name);
         }
 
+        /// <summary>
+        /// Inserts a row of a two-string-column table where Windows Installer keeps it: rows stay in key-pool order.
+        /// A key string the file's pool already has sorts by that pool index. A new key string sorts after all of
+        /// them, in the order the transform's pool gives. Runs only after the whole transform has been checked.
+        /// </summary>
+        private static void InsertRanked(MutableTable table, object?[] row, int transformKeyId, MsiDatabase reader, Dictionary<string, long> newKeyRanks)
+        {
+            if (row[0] is not string key)
+            {
+                throw MutableTable.Failed();
+            }
+            long rank = KeyRankForInsert(key, transformKeyId, reader, newKeyRanks);
+            int index = table.Rows.Count;
+            for (int i = 0; i < table.Rows.Count; i++)
+            {
+                if (KeyRank(table.Rows[i][0] as string, reader, newKeyRanks) > rank)
+                {
+                    index = i;
+                    break;
+                }
+            }
+            table.InsertAt(index, row);
+        }
+
+        private static long KeyRankForInsert(string key, int transformKeyId, MsiDatabase reader, Dictionary<string, long> newKeyRanks)
+        {
+            uint? id = reader.StringIdOf(key);
+            if (id.HasValue)
+            {
+                return id.Value;
+            }
+            if (!newKeyRanks.TryGetValue(key, out long rank))
+            {
+                rank = NewStringBase + transformKeyId;
+                newKeyRanks[key] = rank;
+            }
+            return rank;
+        }
+
+        private static long KeyRank(string? key, MsiDatabase reader, Dictionary<string, long> newKeyRanks)
+        {
+            if (key == null)
+            {
+                return long.MaxValue;
+            }
+            uint? id = reader.StringIdOf(key);
+            if (id.HasValue)
+            {
+                return id.Value;
+            }
+            return newKeyRanks.TryGetValue(key, out long rank) ? rank : long.MaxValue;
+        }
+
         /// <summary>Removes a table defined in the file. Runs only after the whole transform has been checked.</summary>
         private void RemoveTable(string name)
         {
@@ -583,7 +638,7 @@ namespace IsWiX.WindowsInstaller
         /// Only string and 16-bit integer columns of tables with a single-column key are modified. Other layouts are
         /// rejected before the database changes.
         /// </summary>
-        private static List<Action> PlanRows(MutableTable table, byte[] data, MsiTransform transform)
+        private static List<Action> PlanRows(MutableTable table, byte[] data, MsiTransform transform, MsiDatabase reader, Dictionary<string, long> newKeyRanks)
         {
             var changes = new List<Action>();
             int position = 0;
@@ -611,8 +666,9 @@ namespace IsWiX.WindowsInstaller
                         throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
                     }
                     string? value = TransformString(data, position + 4, transform);
+                    int keyId = ReadWord(data, position + 2);
                     position += 6;
-                    changes.Add(() => table.Insert(new object?[] { key, value }));
+                    changes.Add(() => InsertRanked(table, new object?[] { key, value }, keyId, reader, newKeyRanks));
                     continue;
                 }
 
