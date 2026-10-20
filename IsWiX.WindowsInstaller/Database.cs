@@ -313,8 +313,7 @@ namespace IsWiX.WindowsInstaller
                         if (this.summaryInfo == null || this.summaryInfo.IsClosed)
                         {
                             int maxProperties = this.IsReadOnly ? 0 : SummaryInfo.MAX_PROPERTIES;
-                            int summaryInfoHandle = MsiApi.MsiGetSummaryInformation(this, null, (uint) maxProperties);
-                            this.summaryInfo = new SummaryInfo(summaryInfoHandle, true);
+                            this.summaryInfo = MsiApi.MsiGetSummaryInformation(this, null, (uint) maxProperties);
                         }
                     }
                 }

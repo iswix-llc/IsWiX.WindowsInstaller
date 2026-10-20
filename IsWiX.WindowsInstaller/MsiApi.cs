@@ -464,11 +464,11 @@ namespace IsWiX.WindowsInstaller
         /// Opens summary information for a database handle or a package file, returning its handle. A
         /// non-zero update count asks for a handle that can be written.
         /// </summary>
-        internal static int MsiGetSummaryInformation(Database database, string szDatabasePath, uint uiUpdateCount)
+        internal static SummaryInfo MsiGetSummaryInformation(Database database, string szDatabasePath, uint uiUpdateCount)
         {
             try
             {
-                return HandleTable.Add(OpenSummary(database, szDatabasePath, uiUpdateCount));
+                return OpenSummary(database, szDatabasePath, uiUpdateCount);
             }
             catch (MsiErrorException e) when (szDatabasePath != null && (e.Code == (uint) MsiError.FILE_NOT_FOUND || e.Code == (uint) MsiError.ACCESS_DENIED))
             {
@@ -480,7 +480,7 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        private static EngineSummary OpenSummary(Database database, string szDatabasePath, uint uiUpdateCount)
+        private static SummaryInfo OpenSummary(Database database, string szDatabasePath, uint uiUpdateCount)
         {
             bool writable = uiUpdateCount > 0;
             if (database != null)
@@ -490,7 +490,7 @@ namespace IsWiX.WindowsInstaller
                 {
                     database.RequireWritable();
                 }
-                return EngineSummary.Open(database, ownsDatabase: false, writable);
+                return SummaryInfo.Open(database, ownsDatabase: false, writable);
             }
 
             if (szDatabasePath == null)
@@ -500,44 +500,41 @@ namespace IsWiX.WindowsInstaller
             if (!writable)
             {
                 // Read-only summaries come straight from the file, so transforms can be read too.
-                return EngineSummary.OpenFile(szDatabasePath);
+                return SummaryInfo.OpenFile(szDatabasePath);
             }
 
             Database opened = Database.OpenForSummary(szDatabasePath);
-            return EngineSummary.Open(opened, ownsDatabase: true, writable);
+            return SummaryInfo.Open(opened, ownsDatabase: true, writable);
         }
 
         /// <summary>Gets a summary property. Text is set only for string properties.</summary>
-        internal static (uint DataType, int Number, long FileTime, string Text) MsiSummaryInfoGetProperty(int hSummaryInfo, uint uiProperty)
+        internal static (uint DataType, int Number, long FileTime, string Text) MsiSummaryInfoGetProperty(SummaryInfo summary, uint uiProperty)
         {
             return Guard(() =>
             {
-                HandleTable.Get<EngineSummary>(hSummaryInfo).Get(uiProperty, out uint type, out int number, out long fileTime, out string? text);
+                summary.ThrowIfClosed();
+                summary.Get(uiProperty, out uint type, out int number, out long fileTime, out string? text);
                 string value = type == SummaryStream.VtLpstr ? text ?? string.Empty : string.Empty;
                 return (type, number, fileTime, value);
             });
         }
 
-        internal static void MsiSummaryInfoSetProperty(int hSummaryInfo, uint uiProperty, uint uiDataType, int iValue, long ftValue, string szValue)
+        internal static void MsiSummaryInfoSetProperty(SummaryInfo summary, uint uiProperty, uint uiDataType, int iValue, long ftValue, string szValue)
         {
-            Guard(() => HandleTable.Get<EngineSummary>(hSummaryInfo).Set(uiProperty, uiDataType, iValue, ftValue, szValue));
+            Guard(() =>
+            {
+                summary.ThrowIfClosed();
+                summary.Set(uiProperty, uiDataType, iValue, ftValue, szValue);
+            });
         }
 
-        internal static void MsiSummaryInfoPersist(int hSummaryInfo)
+        internal static void MsiSummaryInfoPersist(SummaryInfo summary)
         {
-            Guard(() => HandleTable.Get<EngineSummary>(hSummaryInfo).Persist());
-        }
-
-        /// <summary>Closes a handle. Closing a handle that is already closed is not an error.</summary>
-        internal static void MsiCloseHandle(int hAny)
-        {
-            try
+            Guard(() =>
             {
-                HandleTable.Close(hAny);
-            }
-            catch (MsiErrorException)
-            {
-            }
+                summary.ThrowIfClosed();
+                summary.WriteProperties();
+            });
         }
 
         internal static Record? MsiGetLastErrorRecord()

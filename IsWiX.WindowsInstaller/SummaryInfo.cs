@@ -3,6 +3,8 @@ namespace IsWiX.WindowsInstaller
     using System;
     using System.IO;
     using System.Text;
+    using System.Collections.Generic;
+    using MsiReader;
     using System.Globalization;
     using System.Runtime.InteropServices;
 
@@ -12,7 +14,11 @@ namespace IsWiX.WindowsInstaller
     public class SummaryInfo : IDisposable
     {
 
-        private readonly EngineHandle handleRef;
+        private readonly SortedDictionary<uint, SummaryValue> properties;
+        private readonly Database? database;
+        private readonly bool ownsDatabase;
+        private readonly bool writable;
+        private bool closed;
 
         /// <summary>
         /// Checks if the handle is closed. When closed, method calls on the handle object may throw an <see cref="InvalidHandleException"/>.
@@ -21,18 +27,18 @@ namespace IsWiX.WindowsInstaller
         {
             get
             {
-                return this.handleRef.IsClosed;
+                return this.closed;
             }
         }
 
         /// <summary>
-        /// Gets the engine handle id. Throws if the handle has been closed.
+        /// Throws <see cref="InvalidHandleException"/> if the summary information has been closed.
         /// </summary>
-        internal int Id
+        internal void ThrowIfClosed()
         {
-            get
+            if (this.closed)
             {
-                return this.handleRef.Id;
+                throw new InvalidHandleException();
             }
         }
 
@@ -53,30 +59,14 @@ namespace IsWiX.WindowsInstaller
             this.Dispose();
         }
 
-        /// <summary>
-        /// Tests whether this object is equal to another of the same type with the same engine handle id.
-        /// </summary>
-        public override bool Equals(object obj)
-        {
-            return obj != null && this.GetType() == obj.GetType() &&
-                this.Id == ((SummaryInfo) obj).Id;
-        }
-
-        /// <summary>
-        /// Gets a hash value derived from the engine handle id.
-        /// </summary>
-        public override int GetHashCode()
-        {
-            return this.Id.GetHashCode();
-        }
-
         /// <summary>Releases the handle. Subclasses may override to release their own resources first.</summary>
         /// <param name="disposing">True when called from Dispose.</param>
         protected virtual void Dispose(bool disposing)
         {
             if (disposing)
             {
-                this.handleRef.Close();
+                this.closed = true;
+                this.ReleaseOwnedDatabase();
             }
         }
         internal const int MAX_PROPERTIES = 20;
@@ -98,13 +88,25 @@ namespace IsWiX.WindowsInstaller
         /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msigetsummaryinformation.asp">MsiGetSummaryInformation</a>
         /// </p></remarks>
         public SummaryInfo(string packagePath, bool enableWrite)
+            : this(SummaryInfo.OpenPackage(packagePath, enableWrite))
         {
-            this.handleRef = new EngineHandle(SummaryInfo.OpenSummaryInfo(packagePath, enableWrite), true);
         }
 
-        internal SummaryInfo(int handle, bool ownsHandle)
+        /// <summary>Takes over the state of a summary information that was just opened.</summary>
+        private SummaryInfo(SummaryInfo opened)
         {
-            this.handleRef = new EngineHandle(handle, ownsHandle);
+            this.properties = opened.properties;
+            this.database = opened.database;
+            this.ownsDatabase = opened.ownsDatabase;
+            this.writable = opened.writable;
+        }
+
+        private SummaryInfo(Database? database, bool ownsDatabase, bool writable, SortedDictionary<uint, SummaryValue> properties)
+        {
+            this.database = database;
+            this.ownsDatabase = ownsDatabase;
+            this.writable = writable;
+            this.properties = properties;
         }
 
         /// <summary>Gets or sets the Title summary information property.</summary>
@@ -486,7 +488,7 @@ namespace IsWiX.WindowsInstaller
         {
             get
             {
-                var summaryValue = MsiApi.MsiSummaryInfoGetProperty(this.Id, property);
+                var summaryValue = MsiApi.MsiSummaryInfoGetProperty(this, property);
                 uint dataType = summaryValue.DataType;
                 int intValue = summaryValue.Number;
                 long timeValue = summaryValue.FileTime;
@@ -583,7 +585,7 @@ namespace IsWiX.WindowsInstaller
                     timeValue = ((DateTime) value).ToFileTime();
                 }
 
-                MsiApi.MsiSummaryInfoSetProperty(this.Id, property, dataType, intValue, timeValue, stringValue);
+                MsiApi.MsiSummaryInfoSetProperty(this, property, dataType, intValue, timeValue, stringValue);
             }
         }
 
@@ -606,13 +608,146 @@ namespace IsWiX.WindowsInstaller
         /// </p></remarks>
         public void Persist()
         {
-            MsiApi.MsiSummaryInfoPersist(this.Id);
+            MsiApi.MsiSummaryInfoPersist(this);
         }
 
-        private static int OpenSummaryInfo(string packagePath, bool enableWrite)
+        private static SummaryInfo OpenPackage(string packagePath, bool enableWrite)
         {
             int maxProperties = !enableWrite ? 0 : SummaryInfo.MAX_PROPERTIES;
             return MsiApi.MsiGetSummaryInformation(null, packagePath, (uint) maxProperties);
         }
+
+        /// <summary>Opens the read-only summary of an MSI or transform file, without opening its tables.</summary>
+        internal static SummaryInfo OpenFile(string path)
+        {
+            try
+            {
+                return new SummaryInfo(null, false, false, ReadProperties(MsiStreams.ReadPlain(path, SummaryStream.Name)));
+            }
+            catch (MsiFormatException)
+            {
+                throw new MsiErrorException((uint) MsiError.INSTALL_PACKAGE_INVALID);
+            }
+        }
+
+        /// <summary>Opens the summary of a database. An owned database is closed with the summary.</summary>
+        internal static SummaryInfo Open(Database database, bool ownsDatabase, bool writable)
+        {
+            try
+            {
+                return new SummaryInfo(database, ownsDatabase, writable, ReadProperties(database.ReadPlainStream(SummaryStream.Name)));
+            }
+            catch (MsiFormatException)
+            {
+                if (ownsDatabase)
+                {
+                    database.Dispose();
+                }
+                throw new MsiErrorException((uint) MsiError.INSTALL_PACKAGE_INVALID);
+            }
+        }
+
+        private static SortedDictionary<uint, SummaryValue> ReadProperties(byte[]? data)
+        {
+            return data == null ? new SortedDictionary<uint, SummaryValue>() : SummaryStream.Read(data);
+        }
+
+        internal void Get(uint id, out uint type, out int number, out long fileTime, out string? text)
+        {
+            RequireProperty(id);
+            if (!this.properties.TryGetValue(id, out SummaryValue? value))
+            {
+                type = SummaryStream.VtEmpty;
+                number = 0;
+                fileTime = 0;
+                text = null;
+                return;
+            }
+            type = value.Type;
+            number = value.Number;
+            fileTime = value.FileTime;
+            text = value.Text;
+        }
+
+        internal void Set(uint id, uint type, int number, long fileTime, string? text)
+        {
+            RequireProperty(id);
+            if (!this.writable)
+            {
+                throw new MsiErrorException((uint) MsiError.FUNCTION_FAILED);
+            }
+            if (type == SummaryStream.VtEmpty)
+            {
+                if (id == SummaryStream.CodePageProperty)
+                {
+                    throw new MsiErrorException((uint) MsiError.DATATYPE_MISMATCH);
+                }
+                this.properties.Remove(id);
+                return;
+            }
+
+            if (id == SummaryStream.CodePageProperty && type != SummaryStream.VtI2)
+            {
+                throw new MsiErrorException((uint) MsiError.DATATYPE_MISMATCH);
+            }
+            switch (type)
+            {
+                case SummaryStream.VtI2:
+                    if (number < short.MinValue || number > short.MaxValue)
+                    {
+                        throw new MsiErrorException((uint) MsiError.DATATYPE_MISMATCH);
+                    }
+                    this.properties[id] = new SummaryValue(type, number: number);
+                    break;
+                case SummaryStream.VtI4:
+                    this.properties[id] = new SummaryValue(type, number: number);
+                    break;
+                case SummaryStream.VtFiletime:
+                    this.properties[id] = new SummaryValue(type, fileTime: fileTime);
+                    break;
+                case SummaryStream.VtLpstr:
+                    this.properties[id] = new SummaryValue(type, text: text ?? string.Empty);
+                    break;
+                default:
+                    throw new MsiErrorException((uint) MsiError.DATATYPE_MISMATCH);
+            }
+        }
+
+        /// <summary>Writes the properties into the database. A file-backed handle commits right away.</summary>
+        internal void WriteProperties()
+        {
+            if (!this.writable)
+            {
+                throw new MsiErrorException((uint) MsiError.FUNCTION_FAILED);
+            }
+            // Strings are written as Windows-1252 unless the stream names another code page, so say so explicitly.
+            if (!this.properties.ContainsKey(SummaryStream.CodePageProperty))
+            {
+                this.properties[SummaryStream.CodePageProperty] = new SummaryValue(SummaryStream.VtI2, number: 1252);
+            }
+            this.database!.PutPlainStream(SummaryStream.Name, SummaryStream.Write(this.properties));
+            if (this.ownsDatabase)
+            {
+                this.database!.Commit();
+            }
+        }
+
+        /// <summary>Releases the database this summary owns, if any.</summary>
+        internal void ReleaseOwnedDatabase()
+        {
+            if (this.ownsDatabase)
+            {
+                this.database!.Dispose();
+            }
+        }
+
+        private static void RequireProperty(uint id)
+        {
+            if (id < 1 || id > SummaryStream.MaxProperty)
+            {
+                throw new MsiErrorException((uint) MsiError.DATATYPE_MISMATCH);
+            }
+        }
+
     }
 }
