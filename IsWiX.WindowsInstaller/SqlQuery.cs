@@ -14,7 +14,7 @@ namespace IsWiX.WindowsInstaller
     using System.Collections.Generic;
     using System.Globalization;
     using System.Linq;
-    using MsiReader;
+    using IsWiX.WindowsInstaller.Format;
 
     internal static class SqlErrors
     {

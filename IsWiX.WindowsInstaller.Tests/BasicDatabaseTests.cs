@@ -1,6 +1,7 @@
 using Xunit;
+using IsWiX.WindowsInstaller.Format;
 
-namespace MsiReader.Tests;
+namespace IsWiX.WindowsInstaller.Tests;
 
 /// <summary>Tests against the small, committed fixture basic.msi.</summary>
 public class BasicDatabaseTests

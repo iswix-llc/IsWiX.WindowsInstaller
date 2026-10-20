@@ -1,6 +1,7 @@
 using Xunit;
+using IsWiX.WindowsInstaller.Format;
 
-namespace MsiReader.Tests;
+namespace IsWiX.WindowsInstaller.Tests;
 
 public class StreamHandlingTests
 {

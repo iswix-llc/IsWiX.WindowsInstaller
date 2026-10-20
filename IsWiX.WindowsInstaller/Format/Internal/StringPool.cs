@@ -1,7 +1,7 @@
 using System.Buffers.Binary;
 using System.Text;
 
-namespace MsiReader.Internal;
+namespace IsWiX.WindowsInstaller.Format.Internal;
 
 /// <summary>
 /// The _StringPool and _StringData tables. Table cells hold 2- or 3-byte indexes

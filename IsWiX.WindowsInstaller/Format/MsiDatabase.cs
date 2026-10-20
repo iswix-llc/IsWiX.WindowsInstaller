@@ -1,14 +1,14 @@
 using System.Buffers.Binary;
 using System.Diagnostics.CodeAnalysis;
-using MsiReader.Internal;
+using IsWiX.WindowsInstaller.Format.Internal;
 
-namespace MsiReader;
+namespace IsWiX.WindowsInstaller.Format;
 
 /// <summary>
 /// A read-only Windows Installer (.msi) database. Works on any platform; it does
 /// not use msi.dll.
 /// </summary>
-public sealed class MsiDatabase : IDisposable
+internal sealed class MsiDatabase : IDisposable
 {
     private readonly CompoundFile _file;
     private readonly StringPool _strings;

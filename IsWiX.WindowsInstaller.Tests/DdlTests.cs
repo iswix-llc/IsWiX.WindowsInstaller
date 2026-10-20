@@ -1,4 +1,4 @@
-using MsiReader;
+using IsWiX.WindowsInstaller.Format;
 using Xunit;
 
 namespace IsWiX.WindowsInstaller.Tests;

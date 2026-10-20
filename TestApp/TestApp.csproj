@@ -9,7 +9,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\IsWiX.WindowsInstaller\IsWiX.WindowsInstaller.csproj" />
-    <ProjectReference Include="..\MsiReader\MsiReader.csproj" />
   </ItemGroup>
 
 </Project>

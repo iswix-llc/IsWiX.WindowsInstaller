@@ -6,7 +6,7 @@ namespace IsWiX.WindowsInstaller
     using System.IO;
     using System.Linq;
     using System.Text;
-    using MsiReader;
+    using IsWiX.WindowsInstaller.Format;
 
     /// <summary>Carries a Windows Installer error code out of a managed operation.</summary>
     internal sealed class MsiErrorException : Exception

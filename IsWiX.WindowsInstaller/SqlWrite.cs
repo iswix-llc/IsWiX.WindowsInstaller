@@ -6,7 +6,7 @@ namespace IsWiX.WindowsInstaller
     using System;
     using System.Collections.Generic;
     using System.Linq;
-    using MsiReader;
+    using IsWiX.WindowsInstaller.Format;
 
     /// <summary>
     /// A binary cell of a table loaded from a file. Its bytes are read only when a query, a commit or an export

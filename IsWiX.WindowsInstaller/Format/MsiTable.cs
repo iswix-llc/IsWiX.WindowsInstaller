@@ -1,9 +1,9 @@
 using System.Diagnostics.CodeAnalysis;
 
-namespace MsiReader;
+namespace IsWiX.WindowsInstaller.Format;
 
 /// <summary>A table loaded from an MSI database.</summary>
-public sealed class MsiTable
+internal sealed class MsiTable
 {
     private readonly MsiDatabase _database;
 

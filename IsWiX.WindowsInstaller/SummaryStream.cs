@@ -8,7 +8,7 @@ namespace IsWiX.WindowsInstaller
     using System.IO;
     using System.Linq;
     using System.Text;
-    using MsiReader;
+    using IsWiX.WindowsInstaller.Format;
 
     /// <summary>One summary property. Numbers, file times and strings are held in the fields for their type.</summary>
     internal sealed class SummaryValue

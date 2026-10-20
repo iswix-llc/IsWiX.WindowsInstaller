@@ -1,7 +1,8 @@
 using System.Text;
 using Xunit;
+using IsWiX.WindowsInstaller.Format;
 
-namespace MsiReader.Tests;
+namespace IsWiX.WindowsInstaller.Tests;
 
 /// <summary>Round-trips databases written by <see cref="MsiWriter"/> back through <see cref="MsiDatabase"/>.</summary>
 public class MsiWriterTests

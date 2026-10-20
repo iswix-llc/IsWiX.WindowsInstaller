@@ -7,7 +7,7 @@ namespace IsWiX.WindowsInstaller
     using System.Diagnostics.CodeAnalysis;
     using System.Linq;
     using System.Text;
-    using MsiReader;
+    using IsWiX.WindowsInstaller.Format;
 
     /// <summary>
     /// Accesses a Windows Installer database.

@@ -1,13 +1,14 @@
 using System.Security.Cryptography;
 using Xunit;
+using IsWiX.WindowsInstaller.Format;
 
-namespace MsiReader.Tests;
+namespace IsWiX.WindowsInstaller.Tests;
 
 /// <summary>
 /// Shared fixture that opens the large generated database once. The file is made by
 /// fixtures/generate.sh; if it is missing, these tests are skipped.
 /// </summary>
-public sealed class StressDatabase : IDisposable
+internal sealed class StressDatabase : IDisposable
 {
     public const string Path = "generated/stress.msi";
     public MsiDatabase? Db { get; }
@@ -27,7 +28,7 @@ public sealed class StressDatabase : IDisposable
 /// references, a string over 64 KB, a regular 9 MB stream that needs a DIFAT chain,
 /// and a mini stream.
 /// </summary>
-public class StressDatabaseTests : IClassFixture<StressDatabase>
+internal class StressDatabaseTests : IClassFixture<StressDatabase>
 {
     private readonly StressDatabase _fixture;
 

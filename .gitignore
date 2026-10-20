@@ -427,6 +427,6 @@ FodyWeavers.xsd
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
 
-# MsiReader tests
-!MsiReader.Tests/fixtures/basic.msi
-MsiReader.Tests/fixtures/generated/
+# Format tests
+!IsWiX.WindowsInstaller.Tests/fixtures/basic.msi
+IsWiX.WindowsInstaller.Tests/fixtures/generated/

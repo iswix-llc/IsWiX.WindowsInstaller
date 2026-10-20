@@ -1,4 +1,4 @@
-namespace MsiReader.Internal;
+namespace IsWiX.WindowsInstaller.Format.Internal;
 
 /// <summary>
 /// Writes an OLE Compound File (MS-CFB, major version 3, 512-byte sectors) that holds the given

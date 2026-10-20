@@ -1,10 +1,10 @@
 using System.Text;
-using MsiReader.Internal;
+using IsWiX.WindowsInstaller.Format.Internal;
 
-namespace MsiReader;
+namespace IsWiX.WindowsInstaller.Format;
 
 /// <summary>Describes one column of a table to be written.</summary>
-public sealed class MsiWriteColumn
+internal sealed class MsiWriteColumn
 {
     /// <summary>
     /// Creates a column. For integer columns, <paramref name="size"/> must be 2 or 4. For string columns it is
@@ -29,7 +29,7 @@ public sealed class MsiWriteColumn
 }
 
 /// <summary>A table to be written: its columns, and its rows in column order.</summary>
-public sealed class MsiWriteTable
+internal sealed class MsiWriteTable
 {
     public MsiWriteTable(string name, IReadOnlyList<MsiWriteColumn> columns, IReadOnlyList<object?[]> rows)
     {
@@ -49,13 +49,13 @@ public sealed class MsiWriteTable
 }
 
 /// <summary>A stream to write: its length, and a function that returns its bytes when the writer needs them.</summary>
-public readonly record struct StreamSource(long Length, Func<byte[]> Read)
+internal readonly record struct StreamSource(long Length, Func<byte[]> Read)
 {
     public static StreamSource Of(byte[] data) => new StreamSource(data.Length, () => data);
 }
 
 /// <summary>Writes an MSI database from tables and streams. Output can be read back by <see cref="MsiDatabase"/>.</summary>
-public static class MsiWriter
+internal static class MsiWriter
 {
     private const int MaxStringLength = 65535;
 

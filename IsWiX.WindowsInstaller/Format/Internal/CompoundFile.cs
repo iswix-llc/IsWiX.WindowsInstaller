@@ -1,8 +1,8 @@
 using System.Buffers.Binary;
 using System.Text;
-using MsiReader;
+using IsWiX.WindowsInstaller.Format;
 
-namespace MsiReader.Internal;
+namespace IsWiX.WindowsInstaller.Format.Internal;
 
 /// <summary>
 /// Minimal reader for the OLE Compound File Binary format (MS-CFB), which is the

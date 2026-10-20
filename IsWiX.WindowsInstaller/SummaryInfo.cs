@@ -4,7 +4,7 @@ namespace IsWiX.WindowsInstaller
     using System.IO;
     using System.Text;
     using System.Collections.Generic;
-    using MsiReader;
+    using IsWiX.WindowsInstaller.Format;
     using System.Globalization;
     using System.Runtime.InteropServices;
 

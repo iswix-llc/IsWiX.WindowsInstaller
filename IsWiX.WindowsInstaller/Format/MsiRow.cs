@@ -1,9 +1,9 @@
 using System.Globalization;
 
-namespace MsiReader;
+namespace IsWiX.WindowsInstaller.Format;
 
 /// <summary>A row of an <see cref="MsiTable"/>.</summary>
-public sealed class MsiRow
+internal sealed class MsiRow
 {
     private readonly object?[] _values;
 

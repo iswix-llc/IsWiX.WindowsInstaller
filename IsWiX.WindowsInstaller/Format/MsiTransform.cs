@@ -1,12 +1,12 @@
-using MsiReader.Internal;
+using IsWiX.WindowsInstaller.Format.Internal;
 
-namespace MsiReader;
+namespace IsWiX.WindowsInstaller.Format;
 
 /// <summary>
 /// A transform (.mst) file. A transform has no _Tables or _Columns; its table streams are
 /// kept raw, and its strings come from the transform's own string pool.
 /// </summary>
-public sealed class MsiTransform : IDisposable
+internal sealed class MsiTransform : IDisposable
 {
     private readonly FileStream _stream;
     private readonly StringPool _strings;

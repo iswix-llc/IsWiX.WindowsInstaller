@@ -50,7 +50,7 @@ namespace IsWiX.WindowsInstaller
 
     /// <summary>
     /// Managed implementation of the Windows Installer functions used by this library. Databases are
-    /// read with MsiReader, so this works on any platform without msi.dll. Operations that would change a
+    /// read by the format layer, so this works on any platform without msi.dll. Operations that would change a
     /// database, and summary information, throw ERROR_CALL_NOT_IMPLEMENTED for now.
     /// </summary>
     /// <remarks><p>

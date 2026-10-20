@@ -1,9 +1,9 @@
-using MsiReader.Internal;
+using IsWiX.WindowsInstaller.Format.Internal;
 
-namespace MsiReader;
+namespace IsWiX.WindowsInstaller.Format;
 
 /// <summary>Reads plain streams, such as the summary information, from an MSI or transform file without loading its tables.</summary>
-public static class MsiStreams
+internal static class MsiStreams
 {
     /// <summary>Returns the bytes of a plain stream, or null if the file has no stream with that name.</summary>
     public static byte[]? ReadPlain(string path, string streamName)

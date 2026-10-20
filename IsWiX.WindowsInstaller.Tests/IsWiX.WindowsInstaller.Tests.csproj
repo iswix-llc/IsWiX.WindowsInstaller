@@ -12,6 +12,7 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="Xunit.SkippableFact" Version="1.5.23" />
   </ItemGroup>
 
   <ItemGroup>
@@ -19,19 +20,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\MsiReader.Tests\fixtures\basic.msi" Link="fixtures\basic.msi" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\MsiReader.Tests\fixtures\expected\hello.bin" Link="fixtures\hello.bin" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\MsiReader.Tests\fixtures\test-base.msi" Link="fixtures\test-base.msi" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\MsiReader.Tests\fixtures\test-change.mst" Link="fixtures\test-change.mst" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\MsiReader.Tests\fixtures\test-add.mst" Link="fixtures\test-add.mst" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\MsiReader.Tests\fixtures\test-delete.mst" Link="fixtures\test-delete.mst" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\MsiReader.Tests\fixtures\test-multi.mst" Link="fixtures\test-multi.mst" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\MsiReader.Tests\fixtures\test-twotables.mst" Link="fixtures\test-twotables.mst" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\MsiReader.Tests\fixtures\test-newtable.mst" Link="fixtures\test-newtable.mst" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\MsiReader.Tests\fixtures\test-null.mst" Link="fixtures\test-null.mst" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\MsiReader.Tests\fixtures\test-addremove.mst" Link="fixtures\test-addremove.mst" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\MsiReader.Tests\fixtures\test-twocolumns.mst" Link="fixtures\test-twocolumns.mst" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\MsiReader.Tests\fixtures\test-dropvalidation.mst" Link="fixtures\test-dropvalidation.mst" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="fixtures\expected\hello.bin" Link="fixtures\hello.bin" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

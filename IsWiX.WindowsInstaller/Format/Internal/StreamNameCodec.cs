@@ -1,4 +1,4 @@
-namespace MsiReader.Internal;
+namespace IsWiX.WindowsInstaller.Format.Internal;
 
 /// <summary>
 /// MSI stores table and binary streams under obfuscated names. Characters in the

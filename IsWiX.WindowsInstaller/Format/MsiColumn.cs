@@ -1,7 +1,7 @@
-namespace MsiReader;
+namespace IsWiX.WindowsInstaller.Format;
 
 /// <summary>The kind of value a column holds.</summary>
-public enum MsiColumnType
+internal enum MsiColumnType
 {
     /// <summary>A 16- or 32-bit integer.</summary>
     Integer,
@@ -12,7 +12,7 @@ public enum MsiColumnType
 }
 
 /// <summary>Describes one column of an MSI table.</summary>
-public sealed class MsiColumn
+internal sealed class MsiColumn
 {
     internal MsiColumn(string table, int number, string name, int rawType)
     {
