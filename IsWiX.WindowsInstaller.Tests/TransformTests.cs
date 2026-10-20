@@ -159,6 +159,27 @@ public class TransformTests : IDisposable
     }
 
     [Fact]
+    public void TwoColumnTransformChangesStringAndIntegerLikeWindows()
+    {
+        string path = CopyOfBase();
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            db.ApplyTransform(TestFixtures.Path("test-twocolumns.mst"));
+            db.Commit();
+        }
+
+        using var check = new Database(path);
+        using View view = check.OpenView("SELECT `Feature`, `Description`, `Level` FROM `Feature`");
+        view.Execute();
+        var rows = new List<string>();
+        for (Record? row = view.Fetch(); row != null; row = view.Fetch())
+        {
+            rows.Add(row.GetString(1) + "\t" + row.GetString(2) + "\t" + row.GetInteger(3));
+        }
+        Assert.Equal(FeatureRows, rows);
+    }
+
+    [Fact]
     public void TransformOnReadOnlyDatabaseFails()
     {
         using var db = new Database(CopyOfBase());
@@ -271,5 +292,11 @@ public class TransformTests : IDisposable
         "DefaultUIFont\tWixUI_Font_Normal",
         "ErrorDialog\tErrorDlg",
         "WixUIRMOption\tUseRM",
+    };
+
+    // Windows Installer's Feature table after test-twocolumns.mst, as Description and Level.
+    private static readonly string[] FeatureRows =
+    {
+        "test\tInstalls all the files needed for testtest\t2",
     };
 }

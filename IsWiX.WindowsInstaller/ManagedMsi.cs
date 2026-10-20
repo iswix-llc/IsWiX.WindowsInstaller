@@ -512,8 +512,8 @@ namespace IsWiX.WindowsInstaller
         /// A header of 0 deletes the row and is followed by its key. A header with bit 0x0200 inserts a row of a
         /// two-string-column table: the key and the value follow. Any other header modifies the row with that key:
         /// bit i of the header marks column i, and one value word follows for each marked column, in column order.
-        /// Only string columns of tables with a single-column key are modified. Other layouts are rejected before
-        /// the database changes.
+        /// Only string and 16-bit integer columns of tables with a single-column key are modified. Other layouts are
+        /// rejected before the database changes.
         /// </summary>
         private static List<Action> PlanRows(MutableTable table, byte[] data, MsiTransform transform)
         {
@@ -562,7 +562,7 @@ namespace IsWiX.WindowsInstaller
                 }
                 foreach (int column in columns)
                 {
-                    if (column >= table.Columns.Count || table.Columns[column].Type != MsiColumnType.String)
+                    if (column >= table.Columns.Count || !IsModifiable(table.Columns[column]))
                     {
                         throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
                     }
@@ -572,10 +572,12 @@ namespace IsWiX.WindowsInstaller
                 {
                     throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
                 }
-                var values = new string?[columns.Count];
+                var values = new object?[columns.Count];
                 for (int n = 0; n < columns.Count; n++)
                 {
-                    values[n] = TransformString(data, position + 4 + 2 * n, transform);
+                    values[n] = table.Columns[columns[n]].Type == MsiColumnType.String
+                        ? TransformString(data, position + 4 + 2 * n, transform)
+                        : TransformInteger(ReadWord(data, position + 4 + 2 * n));
                 }
                 position = end;
                 changes.Add(() =>
@@ -590,6 +592,18 @@ namespace IsWiX.WindowsInstaller
                 });
             }
             return changes;
+        }
+
+        /// <summary>A column a transform can change in place: a string column, or a 16-bit integer column.</summary>
+        private static bool IsModifiable(SqlColumn column)
+        {
+            return column.Type == MsiColumnType.String || (column.Type == MsiColumnType.Integer && column.Size is 0 or 2);
+        }
+
+        /// <summary>Decodes a 16-bit integer cell of a transform. The value has a 0x8000 bias, and 0 is null.</summary>
+        private static object? TransformInteger(int word)
+        {
+            return word == 0 ? null : (object) (word - 0x8000);
         }
 
         /// <summary>The index of the row with the given key. A key that is not in the table fails the transform.</summary>
