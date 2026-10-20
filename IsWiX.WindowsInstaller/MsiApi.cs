@@ -3,7 +3,7 @@
 namespace IsWiX.WindowsInstaller
 {
     using System;
-    using System.Text;
+    using System.IO;
     using System.Text.RegularExpressions;
     using System.Runtime.InteropServices;
     using System.Diagnostics.CodeAnalysis;
@@ -53,10 +53,30 @@ namespace IsWiX.WindowsInstaller
     /// <summary>
     /// Managed implementation of the Windows Installer functions used by this library. Databases are
     /// read with MsiReader, so this works on any platform without msi.dll. Operations that would change a
-    /// database, and summary information, return ERROR_CALL_NOT_IMPLEMENTED for now.
+    /// database, and summary information, throw ERROR_CALL_NOT_IMPLEMENTED for now.
     /// </summary>
+    /// <remarks><p>
+    /// Each function returns its result directly. A Windows Installer error is thrown as the matching
+    /// <see cref="InstallerException"/> subtype, so callers never inspect return codes. Results that
+    /// callers branch on are returned as a value or a named outcome.
+    /// </p></remarks>
     internal static class MsiApi
     {
+        /// <summary>Outcome of a view modification for the cases callers handle themselves.</summary>
+        internal enum ModifyOutcome
+        {
+            Ok,
+            FunctionFailed,
+            InvalidData,
+        }
+
+        /// <summary>Outcome of a database merge for the cases callers report differently.</summary>
+        internal enum MergeOutcome
+        {
+            Merged,
+            Conflict,
+            SchemaMismatch,
+        }
 
         internal enum SourceType : int
         {
@@ -103,28 +123,23 @@ namespace IsWiX.WindowsInstaller
             public uint dwStatus;
         }
 
-
-        internal static uint MsiOpenDatabase(string szDatabasePath, IntPtr uiOpenMode, out int hDatabase)
+        internal static int MsiOpenDatabase(string szDatabasePath, IntPtr uiOpenMode)
         {
-            int handle = 0;
-            uint result = Guard(() =>
+            long mode = uiOpenMode.ToInt64();
+            return Guard(() =>
             {
                 // MSIDBOPEN_READONLY (0), MSIDBOPEN_TRANSACT (1) and MSIDBOPEN_DIRECT (2). Create modes are not supported yet.
-                long mode = uiOpenMode.ToInt64();
                 if (mode < 0 || mode > 2)
                 {
                     throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
                 }
-                handle = HandleTable.Add(EngineDatabase.Open(szDatabasePath, (DatabaseMode) mode));
-            });
-            hDatabase = handle;
-            return result;
+                return HandleTable.Add(EngineDatabase.Open(szDatabasePath, (DatabaseMode) mode));
+            }, String.Format(System.Globalization.CultureInfo.InvariantCulture, "Database=\"{0}\"", szDatabasePath));
         }
 
-        internal static uint MsiOpenDatabase(string szDatabasePath, string szPersist, out int hDatabase)
+        internal static int MsiOpenDatabase(string szDatabasePath, string szPersist)
         {
-            hDatabase = 0;
-            return (uint) MsiError.CALL_NOT_IMPLEMENTED;
+            throw InstallerException.ExceptionFromReturnCode((uint) MsiError.CALL_NOT_IMPLEMENTED);
         }
 
         internal static int MsiGetDatabaseState(int hDatabase)
@@ -140,10 +155,9 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        internal static uint MsiDatabaseOpenView(int hDatabase, string szQuery, out int hView)
+        internal static int MsiDatabaseOpenView(int hDatabase, string szQuery)
         {
-            int handle = 0;
-            uint result = Guard(() =>
+            return Guard(() =>
             {
                 EngineDatabase database = HandleTable.Get<EngineDatabase>(hDatabase);
                 if (szQuery == null)
@@ -157,26 +171,24 @@ namespace IsWiX.WindowsInstaller
                     SqlCreateTable or SqlDropTable or SqlAlterTableAdd => new EngineView(database, BoundDdl.Bind(statement, database)),
                     _ => new EngineView(database, BoundWrite.Bind(statement, database)),
                 };
-                handle = HandleTable.Add(view);
+                return HandleTable.Add(view);
             });
-            hView = handle;
-            return result;
         }
 
-        internal static uint MsiDatabaseMerge(int hDatabase, int hDatabaseMerge, string szTableName)
+        internal static MergeOutcome MsiDatabaseMerge(int hDatabase, int hDatabaseMerge, string szTableName)
         {
-            return (uint) MsiError.CALL_NOT_IMPLEMENTED;
+            // Merging is not implemented yet.
+            throw InstallerException.ExceptionFromReturnCode((uint) MsiError.CALL_NOT_IMPLEMENTED);
         }
 
-        internal static uint MsiDatabaseCommit(int hDatabase)
+        internal static void MsiDatabaseCommit(int hDatabase)
         {
-            return Guard(() => HandleTable.Get<EngineDatabase>(hDatabase).Commit());
+            Guard(() => HandleTable.Get<EngineDatabase>(hDatabase).Commit());
         }
 
-        internal static uint MsiDatabaseGetPrimaryKeys(int hDatabase, string szTableName, out int hRecord)
+        internal static int MsiDatabaseGetPrimaryKeys(int hDatabase, string szTableName)
         {
-            int handle = 0;
-            uint result = Guard(() =>
+            return Guard(() =>
             {
                 EngineDatabase database = HandleTable.Get<EngineDatabase>(hDatabase);
                 SqlTable table = database.FindTable(szTableName)
@@ -184,10 +196,8 @@ namespace IsWiX.WindowsInstaller
                 object?[] keys = Array.ConvertAll(
                     System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Where(table.Columns, c => c.IsPrimaryKey)),
                     c => (object?) c.Name);
-                handle = HandleTable.Add(new EngineRecord(keys));
+                return HandleTable.Add(new EngineRecord(keys));
             });
-            hRecord = handle;
-            return result;
         }
 
         internal static uint MsiDatabaseIsTablePersistent(int hDatabase, string szTableName)
@@ -203,34 +213,35 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        internal static uint MsiDatabaseExport(int hDatabase, string szTableName, string szFolderPath, string szFileName)
+        internal static void MsiDatabaseExport(int hDatabase, string szTableName, string szFolderPath, string szFileName)
         {
-            return Guard(() => HandleTable.Get<EngineDatabase>(hDatabase).Export(szTableName, System.IO.Path.Combine(szFolderPath, szFileName)));
+            Guard(() => HandleTable.Get<EngineDatabase>(hDatabase).Export(szTableName, Path.Combine(szFolderPath, szFileName)));
         }
 
-        internal static uint MsiDatabaseImport(int hDatabase, string szFolderPath, string szFileName)
+        internal static void MsiDatabaseImport(int hDatabase, string szFolderPath, string szFileName)
         {
-            return Guard(() => HandleTable.Get<EngineDatabase>(hDatabase).Import(System.IO.Path.Combine(szFolderPath, szFileName)));
+            Guard(() => HandleTable.Get<EngineDatabase>(hDatabase).Import(Path.Combine(szFolderPath, szFileName)));
         }
 
-        internal static uint MsiDatabaseGenerateTransform(int hDatabase, int hDatabaseReference, string szTransformFile, int iReserved1, int iReserved2)
+        internal static bool MsiDatabaseGenerateTransform(int hDatabase, int hDatabaseReference, string szTransformFile, int iReserved1, int iReserved2)
         {
-            return (uint) MsiError.CALL_NOT_IMPLEMENTED;
+            // Generating transforms is not implemented yet.
+            throw InstallerException.ExceptionFromReturnCode((uint) MsiError.CALL_NOT_IMPLEMENTED);
         }
 
-        internal static uint MsiCreateTransformSummaryInfo(int hDatabase, int hDatabaseReference, string szTransformFile, int iErrorConditions, int iValidation)
+        internal static void MsiCreateTransformSummaryInfo(int hDatabase, int hDatabaseReference, string szTransformFile, int iErrorConditions, int iValidation)
         {
-            return (uint) MsiError.CALL_NOT_IMPLEMENTED;
+            throw InstallerException.ExceptionFromReturnCode((uint) MsiError.CALL_NOT_IMPLEMENTED);
         }
 
-        internal static uint MsiDatabaseApplyTransform(int hDatabase, string szTransformFile, int iErrorConditions)
+        internal static void MsiDatabaseApplyTransform(int hDatabase, string szTransformFile, int iErrorConditions)
         {
-            return Guard(() => HandleTable.Get<EngineDatabase>(hDatabase).ApplyTransform(szTransformFile));
+            Guard(() => HandleTable.Get<EngineDatabase>(hDatabase).ApplyTransform(szTransformFile));
         }
 
-        internal static uint MsiViewExecute(int hView, int hRecord)
+        internal static void MsiViewExecute(int hView, int hRecord)
         {
-            return Guard(() =>
+            Guard(() =>
             {
                 EngineView view = HandleTable.Get<EngineView>(hView);
                 object?[] markers = hRecord == 0
@@ -240,56 +251,66 @@ namespace IsWiX.WindowsInstaller
             });
         }
 
-        internal static uint MsiViewFetch(int hView, out int hRecord)
-        {
-            int handle = 0;
-            uint result = Guard(() =>
-            {
-                EngineRecord record = HandleTable.Get<EngineView>(hView).Fetch()
-                    ?? throw new MsiErrorException((uint) MsiError.NO_MORE_ITEMS);
-                handle = HandleTable.Add(record);
-            });
-            hRecord = handle;
-            return result;
-        }
-
-        internal static uint MsiViewModify(int hView, int iModifyMode, int hRecord)
+        /// <summary>Fetches the next record, returning its handle, or null when the view has no more records.</summary>
+        internal static int? MsiViewFetch(int hView)
         {
             return Guard(() =>
             {
-                EngineView view = HandleTable.Get<EngineView>(hView);
-                EngineRecord record = HandleTable.Get<EngineRecord>(hRecord);
-                if (iModifyMode == (int) ViewModifyMode.Refresh || iModifyMode == (int) ViewModifyMode.Seek)
-                {
-                    // These fill the record in place rather than change the table.
-                    object?[] found = view.Lookup(record.Values());
-                    for (int j = 0; j < found.Length; j++)
-                    {
-                        record.Set((uint) (j + 1), found[j]);
-                    }
-                    return;
-                }
-                view.Modify(iModifyMode, record.Values());
+                EngineRecord? record = HandleTable.Get<EngineView>(hView).Fetch();
+                return record == null ? (int?) null : HandleTable.Add(record);
             });
         }
 
-        internal static int MsiViewGetError(int hView, StringBuilder szColumnNameBuffer, ref uint cchBuf)
+        internal static ModifyOutcome MsiViewModify(int hView, int iModifyMode, int hRecord)
         {
             try
             {
-                HandleTable.Get<EngineView>(hView);
+                ModifyRecord(hView, iModifyMode, hRecord);
+                return ModifyOutcome.Ok;
             }
-            catch (MsiErrorException)
+            catch (MsiErrorException e) when (e.Code == (uint) MsiError.FUNCTION_FAILED)
             {
-                return 0;
+                return ModifyOutcome.FunctionFailed;
             }
-            return (int) WriteString(string.Empty, szColumnNameBuffer, ref cchBuf);
+            catch (MsiErrorException e) when (e.Code == (uint) MsiError.INVALID_DATA)
+            {
+                return ModifyOutcome.InvalidData;
+            }
+            catch (MsiErrorException e)
+            {
+                throw InstallerException.ExceptionFromReturnCode(e.Code);
+            }
         }
 
-        internal static uint MsiViewGetColumnInfo(int hView, uint eColumnInfo, out int hRecord)
+        private static void ModifyRecord(int hView, int iModifyMode, int hRecord)
         {
-            int handle = 0;
-            uint result = Guard(() =>
+            EngineView view = HandleTable.Get<EngineView>(hView);
+            EngineRecord record = HandleTable.Get<EngineRecord>(hRecord);
+            if (iModifyMode == (int) ViewModifyMode.Refresh || iModifyMode == (int) ViewModifyMode.Seek)
+            {
+                // These fill the record in place rather than change the table.
+                object?[] found = view.Lookup(record.Values());
+                for (int j = 0; j < found.Length; j++)
+                {
+                    record.Set((uint) (j + 1), found[j]);
+                }
+                return;
+            }
+            view.Modify(iModifyMode, record.Values());
+        }
+
+        /// <summary>
+        /// Returns the next validation error for the last modification. The engine keeps no per-column error
+        /// information yet, so the error is always 0 (none).
+        /// </summary>
+        internal static (int Error, string Column) MsiViewGetError(int hView)
+        {
+            return (0, string.Empty);
+        }
+
+        internal static int MsiViewGetColumnInfo(int hView, uint eColumnInfo)
+        {
+            return Guard(() =>
             {
                 EngineView view = HandleTable.Get<EngineView>(hView);
                 IReadOnlyList<SqlColumn> columns = view.Query?.OutputColumns
@@ -302,10 +323,8 @@ namespace IsWiX.WindowsInstaller
                     SqlColumn column = columns[i];
                     values[i] = eColumnInfo == 0 ? column.Name : column.TypeCode;
                 }
-                handle = HandleTable.Add(new EngineRecord(values));
+                return HandleTable.Add(new EngineRecord(values));
             });
-            hRecord = handle;
-            return result;
         }
 
         internal static int MsiCreateRecord(uint cParams)
@@ -320,28 +339,23 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        internal static uint MsiFormatRecord(int hInstall, int hRecord, StringBuilder szResultBuf, ref uint cchResultBuf)
+        internal static string MsiFormatRecord(int hInstall, int hRecord)
         {
-            try
+            return Guard(() =>
             {
                 EngineRecord record = HandleTable.Get<EngineRecord>(hRecord);
                 string template = record.GetString(0);
-                string text = Regex.Replace(template, @"\[(\d+)\]", match =>
+                return Regex.Replace(template, @"\[(\d+)\]", match =>
                 {
                     int field = int.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
                     return field >= 1 && field <= record.FieldCount ? record.GetString((uint) field) : match.Value;
                 });
-                return WriteString(text, szResultBuf, ref cchResultBuf);
-            }
-            catch (MsiErrorException e)
-            {
-                return e.Code;
-            }
+            });
         }
 
-        internal static uint MsiRecordClearData(int hRecord)
+        internal static void MsiRecordClearData(int hRecord)
         {
-            return Guard(() => HandleTable.Get<EngineRecord>(hRecord).Clear());
+            Guard(() => HandleTable.Get<EngineRecord>(hRecord).Clear());
         }
 
         internal static uint MsiRecordGetFieldCount(int hRecord)
@@ -380,31 +394,23 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        internal static uint MsiRecordGetString(int hRecord, uint iField, StringBuilder szValueBuf, ref uint cchValueBuf)
+        internal static string MsiRecordGetString(int hRecord, uint iField)
         {
-            try
-            {
-                string value = HandleTable.Get<EngineRecord>(hRecord).GetString(iField);
-                return WriteString(value, szValueBuf, ref cchValueBuf);
-            }
-            catch (MsiErrorException e)
-            {
-                return e.Code;
-            }
+            return Guard(() => HandleTable.Get<EngineRecord>(hRecord).GetString(iField));
         }
 
-        internal static uint MsiRecordSetInteger(int hRecord, uint iField, int iValue)
+        internal static void MsiRecordSetInteger(int hRecord, uint iField, int iValue)
         {
-            return Guard(() =>
+            Guard(() =>
             {
                 // MSI_NULL_INTEGER clears the field.
                 HandleTable.Get<EngineRecord>(hRecord).Set(iField, iValue == int.MinValue ? null : (object) iValue);
             });
         }
 
-        internal static uint MsiRecordSetString(int hRecord, uint iField, string szValue)
+        internal static void MsiRecordSetString(int hRecord, uint iField, string szValue)
         {
-            return Guard(() =>
+            Guard(() =>
             {
                 HandleTable.Get<EngineRecord>(hRecord).Set(iField, string.IsNullOrEmpty(szValue) ? null : szValue);
             });
@@ -433,15 +439,19 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        internal static uint MsiRecordReadStream(int hRecord, uint iField, byte[] szDataBuf, ref uint cbDataBuf)
+        /// <summary>
+        /// Reads up to <paramref name="count"/> bytes of a binary field into <paramref name="buffer"/>, returning
+        /// the number of bytes read. Each read continues where the previous one stopped, as the Windows Installer
+        /// API does.
+        /// </summary>
+        internal static int MsiRecordReadStream(int hRecord, uint iField, byte[] buffer, int count)
         {
-            try
+            return Guard(() =>
             {
                 EngineRecord record = HandleTable.Get<EngineRecord>(hRecord);
                 object? value = record[iField];
                 if (value == null)
                 {
-                    cbDataBuf = 0;
                     return 0;
                 }
                 if (value is not byte[] data)
@@ -449,164 +459,154 @@ namespace IsWiX.WindowsInstaller
                     throw new MsiErrorException((uint) MsiError.DATATYPE_MISMATCH);
                 }
 
-                // Each read continues where the previous one stopped, as the Windows Installer API does.
                 int offset = record.ReadOffset(iField);
-                int count = (int) Math.Min(cbDataBuf, (uint) Math.Max(0, data.Length - offset));
-                if (szDataBuf != null && count > 0)
+                int read = Math.Min(count, Math.Max(0, data.Length - offset));
+                if (buffer != null && read > 0)
                 {
-                    Array.Copy(data, offset, szDataBuf, 0, count);
+                    Array.Copy(data, offset, buffer, 0, read);
                 }
-                record.SetReadOffset(iField, offset + count);
-                cbDataBuf = (uint) count;
-                return 0;
-            }
-            catch (MsiErrorException e)
-            {
-                return e.Code;
-            }
+                record.SetReadOffset(iField, offset + read);
+                return read;
+            });
         }
 
-        internal static uint MsiRecordSetStream(int hRecord, uint iField, string szFilePath)
+        internal static void MsiRecordSetStream(int hRecord, uint iField, string szFilePath)
         {
-            return Guard(() =>
+            Guard(() =>
             {
                 EngineRecord record = HandleTable.Get<EngineRecord>(hRecord);
-                byte[]? data = szFilePath == null ? null : System.IO.File.ReadAllBytes(szFilePath);
+                byte[]? data = szFilePath == null ? null : File.ReadAllBytes(szFilePath);
                 record.Set(iField, data);
             });
         }
 
-        internal static uint MsiGetSummaryInformation(int hDatabase, string szDatabasePath, uint uiUpdateCount, out int hSummaryInfo)
+        /// <summary>
+        /// Opens summary information for a database handle or a package file, returning its handle. A
+        /// non-zero update count asks for a handle that can be written.
+        /// </summary>
+        internal static int MsiGetSummaryInformation(int hDatabase, string szDatabasePath, uint uiUpdateCount)
         {
-            int handle = 0;
-            uint result = Guard(() =>
+            try
             {
-                // A non-zero update count asks for a handle that can be written.
-                bool writable = uiUpdateCount > 0;
-                EngineSummary summary;
-                if (hDatabase != 0)
-                {
-                    EngineDatabase database = HandleTable.Get<EngineDatabase>(hDatabase);
-                    if (writable)
-                    {
-                        database.RequireWritable();
-                    }
-                    summary = EngineSummary.Open(database, ownsDatabase: false, writable);
-                }
-                else
-                {
-                    if (szDatabasePath == null)
-                    {
-                        throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
-                    }
-                    if (!writable)
-                    {
-                        // Read-only summaries come straight from the file, so transforms can be read too.
-                        summary = EngineSummary.OpenFile(szDatabasePath);
-                    }
-                    else
-                    {
-                        EngineDatabase database = EngineDatabase.Open(szDatabasePath, DatabaseMode.Transact);
-                        summary = EngineSummary.Open(database, ownsDatabase: true, writable);
-                    }
-                }
-                handle = HandleTable.Add(summary);
-            });
-            hSummaryInfo = handle;
-            return result;
-        }
-
-        internal static uint MsiSummaryInfoGetProperty(int hSummaryInfo, uint uiProperty, out uint uiDataType, out int iValue, ref long ftValue, StringBuilder szValueBuf, ref uint cchValueBuf)
-        {
-            uint type = 0;
-            int number = 0;
-            long fileTime = 0;
-            string? text = null;
-            uint result = Guard(() => HandleTable.Get<EngineSummary>(hSummaryInfo)
-                .Get(uiProperty, out type, out number, out fileTime, out text));
-
-            uiDataType = type;
-            iValue = number;
-            ftValue = fileTime;
-            if (result == 0 && type == SummaryStream.VtLpstr)
-            {
-                result = WriteString(text ?? string.Empty, szValueBuf, ref cchValueBuf);
+                return HandleTable.Add(OpenSummary(hDatabase, szDatabasePath, uiUpdateCount));
             }
-            return result;
+            catch (MsiErrorException e) when (szDatabasePath != null && (e.Code == (uint) MsiError.FILE_NOT_FOUND || e.Code == (uint) MsiError.ACCESS_DENIED))
+            {
+                throw new FileNotFoundException(null, szDatabasePath);
+            }
+            catch (MsiErrorException e)
+            {
+                throw InstallerException.ExceptionFromReturnCode(e.Code);
+            }
         }
 
-        internal static uint MsiSummaryInfoSetProperty(int hSummaryInfo, uint uiProperty, uint uiDataType, int iValue, ref long ftValue, string szValue)
+        private static EngineSummary OpenSummary(int hDatabase, string szDatabasePath, uint uiUpdateCount)
         {
-            long fileTime = ftValue;
-            return Guard(() => HandleTable.Get<EngineSummary>(hSummaryInfo)
-                .Set(uiProperty, uiDataType, iValue, fileTime, szValue));
+            bool writable = uiUpdateCount > 0;
+            if (hDatabase != 0)
+            {
+                EngineDatabase database = HandleTable.Get<EngineDatabase>(hDatabase);
+                if (writable)
+                {
+                    database.RequireWritable();
+                }
+                return EngineSummary.Open(database, ownsDatabase: false, writable);
+            }
+
+            if (szDatabasePath == null)
+            {
+                throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
+            }
+            if (!writable)
+            {
+                // Read-only summaries come straight from the file, so transforms can be read too.
+                return EngineSummary.OpenFile(szDatabasePath);
+            }
+
+            EngineDatabase opened = EngineDatabase.Open(szDatabasePath, DatabaseMode.Transact);
+            return EngineSummary.Open(opened, ownsDatabase: true, writable);
         }
 
-        internal static uint MsiSummaryInfoPersist(int hSummaryInfo)
+        /// <summary>Gets a summary property. Text is set only for string properties.</summary>
+        internal static (uint DataType, int Number, long FileTime, string Text) MsiSummaryInfoGetProperty(int hSummaryInfo, uint uiProperty)
         {
-            return Guard(() => HandleTable.Get<EngineSummary>(hSummaryInfo).Persist());
+            return Guard(() =>
+            {
+                HandleTable.Get<EngineSummary>(hSummaryInfo).Get(uiProperty, out uint type, out int number, out long fileTime, out string? text);
+                string value = type == SummaryStream.VtLpstr ? text ?? string.Empty : string.Empty;
+                return (type, number, fileTime, value);
+            });
         }
 
-        internal static uint MsiCloseHandle(int hAny)
+        internal static void MsiSummaryInfoSetProperty(int hSummaryInfo, uint uiProperty, uint uiDataType, int iValue, long ftValue, string szValue)
         {
-            return Guard(() => HandleTable.Close(hAny));
+            Guard(() => HandleTable.Get<EngineSummary>(hSummaryInfo).Set(uiProperty, uiDataType, iValue, ftValue, szValue));
+        }
+
+        internal static void MsiSummaryInfoPersist(int hSummaryInfo)
+        {
+            Guard(() => HandleTable.Get<EngineSummary>(hSummaryInfo).Persist());
+        }
+
+        /// <summary>Closes a handle. Closing a handle that is already closed is not an error.</summary>
+        internal static void MsiCloseHandle(int hAny)
+        {
+            try
+            {
+                HandleTable.Close(hAny);
+            }
+            catch (MsiErrorException)
+            {
+            }
         }
 
         internal static int MsiGetLastErrorRecord()
         {
-            // Errors are reported through return codes, so there is never a separate error record.
+            // Errors are thrown, so there is never a separate error record.
             return 0;
         }
 
-        internal static uint FormatMessage(uint dwFlags, IntPtr lpSource, uint dwMessageId, uint dwLanguageId, StringBuilder lpBuffer, uint nSize, IntPtr Arguments)
+        /// <summary>Returns the system text for an error code, or null when none is available.</summary>
+        internal static string? FormatMessage(uint messageId)
         {
-            // No system message table is available outside Windows; zero tells callers there is no text.
-            return 0;
+            // No system message table is available outside Windows.
+            return null;
         }
 
-        internal static int StgOpenStorage(string wcsName, IntPtr stgPriority, uint grfMode, IntPtr snbExclude, uint reserved, out IStorage stgOpen)
+        internal static IStorage StgOpenStorage(string wcsName, uint grfMode)
         {
-            stgOpen = null!;
-            return E_NOTIMPL;
+            throw new NotImplementedException();
         }
 
-        internal static int StgCreateDocfile(string wcsName, uint grfMode, uint reserved, out IStorage stgOpen)
+        internal static IStorage StgCreateDocfile(string wcsName, uint grfMode)
         {
-            stgOpen = null!;
-            return E_NOTIMPL;
+            throw new NotImplementedException();
         }
 
-        private const int E_NOTIMPL = unchecked((int) 0x80004001);
-
-        /// <summary>Runs an operation and converts a Windows Installer error into its return code.</summary>
-        private static uint Guard(Action operation)
+        /// <summary>Runs an operation, throwing a Windows Installer error as its matching exception.</summary>
+        private static void Guard(Action operation, string? message = null)
         {
             try
             {
                 operation();
-                return (uint) MsiError.SUCCESS;
             }
             catch (MsiErrorException e)
             {
-                return e.Code;
+                throw InstallerException.ExceptionFromReturnCode(e.Code, message);
             }
         }
 
-        /// <summary>
-        /// Copies text into a caller-supplied buffer using the Windows Installer size protocol: when the
-        /// buffer is too small, the required length is returned in cch and ERROR_MORE_DATA is returned.
-        /// </summary>
-        private static uint WriteString(string value, StringBuilder buffer, ref uint cch)
+        /// <summary>Runs an operation that returns a value, throwing a Windows Installer error as its matching exception.</summary>
+        private static T Guard<T>(Func<T> operation, string? message = null)
         {
-            if (value.Length + 1 > buffer.Capacity)
+            try
             {
-                cch = (uint) value.Length;
-                return (uint) MsiError.MORE_DATA;
+                return operation();
             }
-            buffer.Clear();
-            buffer.Append(value);
-            cch = (uint) value.Length;
-            return (uint) MsiError.SUCCESS;
+            catch (MsiErrorException e)
+            {
+                throw InstallerException.ExceptionFromReturnCode(e.Code, message);
+            }
         }
     }
 }

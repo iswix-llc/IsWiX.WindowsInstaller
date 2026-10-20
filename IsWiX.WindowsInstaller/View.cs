@@ -156,16 +156,13 @@ namespace IsWiX.WindowsInstaller
         [SuppressMessage("Microsoft.Naming", "CA1704:IdentifiersShouldBeSpelledCorrectly", MessageId = "Params"), SuppressMessage("Microsoft.Design", "CA1011:ConsiderPassingBaseTypesAsParameters")]
         public void Execute(Record executeParams)
         {
-            uint ret = MsiApi.MsiViewExecute(
-                this.Id,
-                (executeParams != null ? executeParams.Id : 0));
-            if (ret == (uint) MsiError.BAD_QUERY_SYNTAX)
+            try
+            {
+                MsiApi.MsiViewExecute(this.Id, (executeParams != null ? executeParams.Id : 0));
+            }
+            catch (BadQuerySyntaxException)
             {
                 throw new BadQuerySyntaxException(this.sql);
-            }
-            else if (ret != 0)
-            {
-                throw InstallerException.ExceptionFromReturnCode(ret);
             }
         }
 
@@ -195,18 +192,13 @@ namespace IsWiX.WindowsInstaller
         /// </p></remarks>
         public Record Fetch()
         {
-            int recordHandle;
-            uint ret = MsiApi.MsiViewFetch(this.Id, out recordHandle);
-            if (ret == (uint) MsiError.NO_MORE_ITEMS)
+            int? recordHandle = MsiApi.MsiViewFetch(this.Id);
+            if (recordHandle == null)
             {
                 return null;
             }
-            else if (ret != 0)
-            {
-                throw InstallerException.ExceptionFromReturnCode(ret);
-            }
 
-            Record r = new Record(recordHandle, true, this);
+            Record r = new Record(recordHandle.Value, true, this);
             r.IsFormatStringInvalid = true;
             return r;
         }
@@ -261,14 +253,15 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("record");
             }
 
-            uint ret = MsiApi.MsiViewModify(this.Id, (int) mode, record.Id);
+            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this.Id, (int) mode, record.Id);
             if (mode == ViewModifyMode.Insert || mode == ViewModifyMode.InsertTemporary)
             {
                 record.IsFormatStringInvalid = true;
             }
-            if (ret != 0)
+            if (outcome != MsiApi.ModifyOutcome.Ok)
             {
-                throw InstallerException.ExceptionFromReturnCode(ret);
+                throw InstallerException.ExceptionFromReturnCode(
+                    (uint) (outcome == MsiApi.ModifyOutcome.InvalidData ? MsiError.INVALID_DATA : MsiError.FUNCTION_FAILED));
             }
         }
 
@@ -418,15 +411,15 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("record");
             }
 
-            uint ret = MsiApi.MsiViewModify(this.Id, (int) ViewModifyMode.Seek, record.Id);
+            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this.Id, (int) ViewModifyMode.Seek, record.Id);
             record.IsFormatStringInvalid = true;
-            if (ret == (uint) MsiError.FUNCTION_FAILED)
+            if (outcome == MsiApi.ModifyOutcome.FunctionFailed)
             {
                 return false;
             }
-            else if (ret != 0)
+            else if (outcome != MsiApi.ModifyOutcome.Ok)
             {
-                throw InstallerException.ExceptionFromReturnCode(ret);
+                throw InstallerException.ExceptionFromReturnCode((uint) MsiError.INVALID_DATA);
             }
 
             return true;
@@ -457,14 +450,14 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("record");
             }
 
-            uint ret = MsiApi.MsiViewModify(this.Id, (int) ViewModifyMode.Merge, record.Id);
-            if (ret == (uint) MsiError.FUNCTION_FAILED)
+            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this.Id, (int) ViewModifyMode.Merge, record.Id);
+            if (outcome == MsiApi.ModifyOutcome.FunctionFailed)
             {
                 return false;
             }
-            else if (ret != 0)
+            else if (outcome != MsiApi.ModifyOutcome.Ok)
             {
-                throw InstallerException.ExceptionFromReturnCode(ret);
+                throw InstallerException.ExceptionFromReturnCode((uint) MsiError.INVALID_DATA);
             }
             return true;
         }
@@ -565,21 +558,13 @@ namespace IsWiX.WindowsInstaller
 
         private ICollection<ValidationErrorInfo> InternalValidate(ViewModifyMode mode, Record record)
         {
-            uint ret = MsiApi.MsiViewModify(this.Id, (int) mode, record.Id);
-            if (ret == (uint) MsiError.INVALID_DATA)
+            MsiApi.ModifyOutcome outcome = MsiApi.MsiViewModify(this.Id, (int) mode, record.Id);
+            if (outcome == MsiApi.ModifyOutcome.InvalidData)
             {
                 ICollection<ValidationErrorInfo> errorInfo = new List<ValidationErrorInfo>();
                 while (true)
                 {
-                    uint bufSize = 40;
-                    StringBuilder column = new StringBuilder("", (int) bufSize);
-                    int error = MsiApi.MsiViewGetError(this.Id, column, ref bufSize);
-                    if (error == -2 /*MSIDBERROR_MOREDATA*/)
-                    {
-                        column.Capacity = (int) ++bufSize;
-                        error = MsiApi.MsiViewGetError(this.Id, column, ref bufSize);
-                    }
-                    
+                    (int error, string column) = MsiApi.MsiViewGetError(this.Id);
                     if (error == -3 /*MSIDBERROR_INVALIDARG*/)
                     {
                         throw InstallerException.ExceptionFromReturnCode((uint) MsiError.INVALID_PARAMETER);
@@ -589,14 +574,14 @@ namespace IsWiX.WindowsInstaller
                         break;
                     }
 
-                    errorInfo.Add(new ValidationErrorInfo((ValidationError) error, column.ToString()));
+                    errorInfo.Add(new ValidationErrorInfo((ValidationError) error, column));
                 }
 
                 return errorInfo;
             }
-            else if (ret != 0)
+            else if (outcome != MsiApi.ModifyOutcome.Ok)
             {
-                throw InstallerException.ExceptionFromReturnCode(ret);
+                throw InstallerException.ExceptionFromReturnCode((uint) MsiError.FUNCTION_FAILED);
             }
             return null;
         }

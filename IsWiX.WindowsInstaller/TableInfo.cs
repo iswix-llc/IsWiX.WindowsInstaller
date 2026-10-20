@@ -240,13 +240,7 @@ namespace IsWiX.WindowsInstaller
             }
             else
             {
-                int hrec;
-                uint ret = MsiApi.MsiDatabaseGetPrimaryKeys(
-                    db.Id, table, out hrec);
-                if (ret != 0)
-                {
-                    throw InstallerException.ExceptionFromReturnCode(ret);
-                }
+                int hrec = MsiApi.MsiDatabaseGetPrimaryKeys(db.Id, table);
 
                 using (Record rec = new Record(hrec, true, null))
                 {

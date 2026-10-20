@@ -255,11 +255,7 @@ namespace IsWiX.WindowsInstaller
         /// </p></remarks>
         public void Clear()
         {
-            uint ret = MsiApi.MsiRecordClearData(this.Id);
-            if (ret != 0)
-            {
-                throw InstallerException.ExceptionFromReturnCode(ret);
-            }
+            MsiApi.MsiRecordClearData(this.Id);
         }
 
         /// <summary>
@@ -435,11 +431,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            uint ret = MsiApi.MsiRecordSetInteger(this.Id, (uint) field, value);
-            if (ret != 0)
-            {
-                throw InstallerException.ExceptionFromReturnCode(ret);
-            }
+            MsiApi.MsiRecordSetInteger(this.Id, (uint) field, value);
         }
 
         /// <summary>
@@ -472,14 +464,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            uint ret = MsiApi.MsiRecordSetInteger(
-                this.Id,
-                (uint) field,
-                value.HasValue ? (int) value : Int32.MinValue);
-            if (ret != 0)
-            {
-                throw InstallerException.ExceptionFromReturnCode(ret);
-            }
+            MsiApi.MsiRecordSetInteger(this.Id, (uint) field, value.HasValue ? (int) value : Int32.MinValue);
         }
 
         /// <summary>
@@ -511,19 +496,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.CheckRange(field);
 
-            StringBuilder buf = new StringBuilder(String.Empty);
-            uint bufSize = 0;
-            uint ret = MsiApi.MsiRecordGetString(this.Id, (uint) field, buf, ref bufSize);
-            if (ret == (uint) MsiError.MORE_DATA)
-            {
-                buf.Capacity = (int) ++bufSize;
-                ret = MsiApi.MsiRecordGetString(this.Id, (uint) field, buf, ref bufSize);
-            }
-            if (ret != 0)
-            {
-                throw InstallerException.ExceptionFromReturnCode(ret);
-            }
-            return buf.ToString();
+            return MsiApi.MsiRecordGetString(this.Id, (uint) field);
         }
 
         /// <summary>
@@ -559,11 +532,7 @@ namespace IsWiX.WindowsInstaller
                 value = String.Empty;
             }
 
-            uint ret = MsiApi.MsiRecordSetString(this.Id, (uint) field, value);
-            if (ret != 0)
-            {
-                throw InstallerException.ExceptionFromReturnCode(ret);
-            }
+            MsiApi.MsiRecordSetString(this.Id, (uint) field, value);
 
             // If we set the FormatString manually, then it should be valid again
             if (field == 0)
@@ -744,11 +713,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("filePath");
             }
 
-            uint ret = MsiApi.MsiRecordSetStream(this.Id, (uint) field, filePath);
-            if (ret != 0)
-            {
-                throw InstallerException.ExceptionFromReturnCode(ret);
-            }
+            MsiApi.MsiRecordSetStream(this.Id, (uint) field, filePath);
         }
 
         /// <summary>
@@ -792,11 +757,7 @@ namespace IsWiX.WindowsInstaller
 
             if (stream == null)
             {
-                uint ret = MsiApi.MsiRecordSetStream(this.Id, (uint) field, null);
-                if (ret != 0)
-                {
-                    throw InstallerException.ExceptionFromReturnCode(ret);
-                }
+                MsiApi.MsiRecordSetStream(this.Id, (uint) field, null);
             }
             else
             {
@@ -814,11 +775,7 @@ namespace IsWiX.WindowsInstaller
                     writeStream.Close();
                     writeStream = null;
 
-                    uint ret = MsiApi.MsiRecordSetStream(this.Id, (uint) field, tempPath);
-                    if (ret != 0)
-                    {
-                        throw InstallerException.ExceptionFromReturnCode(ret);
-                    }
+                    MsiApi.MsiRecordSetStream(this.Id, (uint) field, tempPath);
                 }
                 finally
                 {
@@ -898,20 +855,7 @@ namespace IsWiX.WindowsInstaller
 
             InstallerHandle session = provider as InstallerHandle;
             int sessionHandle = session != null ? session.Id : 0;
-            StringBuilder buf = new StringBuilder(String.Empty);
-            uint bufSize = 1;
-            uint ret = MsiApi.MsiFormatRecord(sessionHandle, this.Id, buf, ref bufSize);
-            if (ret == (uint) MsiError.MORE_DATA)
-            {
-                bufSize++;
-                buf = new StringBuilder((int) bufSize);
-                ret = MsiApi.MsiFormatRecord(sessionHandle, this.Id, buf, ref bufSize);
-            }
-            if (ret != 0)
-            {
-                throw InstallerException.ExceptionFromReturnCode(ret);
-            }
-            return buf.ToString();
+            return MsiApi.MsiFormatRecord(sessionHandle, this.Id);
         }
 
         /// <summary>
@@ -975,33 +919,19 @@ namespace IsWiX.WindowsInstaller
         [SuppressMessage("Microsoft.Security", "CA2122:DoNotIndirectlyExposeMethodsWithLinkDemands")]
         private static void ExtractSubStorage(string databaseFile, string storageName, string extractFile)
         {
-            IStorage storage;
             MsiApi.STGM openMode = MsiApi.STGM.READ | MsiApi.STGM.SHARE_DENY_WRITE;
-            int hr = MsiApi.StgOpenStorage(databaseFile, IntPtr.Zero, (uint) openMode, IntPtr.Zero, 0, out storage);
-            if (hr != 0)
-            {
-                Marshal.ThrowExceptionForHR(hr);
-            }
-
+            IStorage storage = MsiApi.StgOpenStorage(databaseFile, (uint) openMode);
             try
             {
                 openMode = MsiApi.STGM.READ | MsiApi.STGM.SHARE_EXCLUSIVE;
                 IStorage subStorage = storage.OpenStorage(storageName, IntPtr.Zero, (uint) openMode, IntPtr.Zero, 0);
-
                 try
                 {
-                    IStorage newStorage;
                     openMode = MsiApi.STGM.CREATE | MsiApi.STGM.READWRITE | MsiApi.STGM.SHARE_EXCLUSIVE;
-                    hr = MsiApi.StgCreateDocfile(extractFile, (uint) openMode, 0, out newStorage);
-                    if (hr != 0)
-                    {
-                        Marshal.ThrowExceptionForHR(hr);
-                    }
-
+                    IStorage newStorage = MsiApi.StgCreateDocfile(extractFile, (uint) openMode);
                     try
                     {
                         subStorage.CopyTo(0, IntPtr.Zero, IntPtr.Zero, newStorage);
-
                         newStorage.Commit(0);
                     }
                     finally

@@ -419,24 +419,11 @@ namespace IsWiX.WindowsInstaller
         {
             get
             {
-                uint dataType;
-                StringBuilder stringValue = new StringBuilder("");
-                uint bufSize = 0;
-                int intValue;
-                long timeValue = 0;
-
-                uint ret = MsiApi.MsiSummaryInfoGetProperty(
-                    this.Id,
-                    property,
-                    out dataType,
-                    out intValue,
-                    ref timeValue,
-                    stringValue,
-                    ref bufSize);
-                if (ret != 0 && dataType != (uint) VarEnum.VT_LPSTR)
-                {
-                    throw InstallerException.ExceptionFromReturnCode(ret);
-                }
+                var summaryValue = MsiApi.MsiSummaryInfoGetProperty(this.Id, property);
+                uint dataType = summaryValue.DataType;
+                int intValue = summaryValue.Number;
+                long timeValue = summaryValue.FileTime;
+                string stringValue = summaryValue.Text;
 
                 switch ((VarEnum) dataType)
                 {
@@ -462,23 +449,7 @@ namespace IsWiX.WindowsInstaller
 
                     case VarEnum.VT_LPSTR:
                     {
-                        if (ret == (uint) MsiError.MORE_DATA)
-                        {
-                            stringValue.Capacity = (int) ++bufSize;
-                            ret = MsiApi.MsiSummaryInfoGetProperty(
-                                this.Id,
-                                property,
-                                out dataType,
-                                out intValue,
-                                ref timeValue,
-                                stringValue,
-                                ref bufSize);
-                        }
-                        if (ret != 0)
-                        {
-                            throw InstallerException.ExceptionFromReturnCode(ret);
-                        }
-                        return stringValue.ToString();
+                        return stringValue;
                     }
 
                     case VarEnum.VT_I2:
@@ -545,17 +516,7 @@ namespace IsWiX.WindowsInstaller
                     timeValue = ((DateTime) value).ToFileTime();
                 }
 
-                uint ret = MsiApi.MsiSummaryInfoSetProperty(
-                    this.Id,
-                    property,
-                    dataType,
-                    intValue,
-                    ref timeValue,
-                    stringValue);
-                if (ret != 0)
-                {
-                    throw InstallerException.ExceptionFromReturnCode(ret);
-                }
+                MsiApi.MsiSummaryInfoSetProperty(this.Id, property, dataType, intValue, timeValue, stringValue);
             }
         }
 
@@ -578,35 +539,13 @@ namespace IsWiX.WindowsInstaller
         /// </p></remarks>
         public void Persist()
         {
-            uint ret = MsiApi.MsiSummaryInfoPersist(this.Id);
-            if (ret != 0)
-            {
-                throw InstallerException.ExceptionFromReturnCode(ret);
-            }
+            MsiApi.MsiSummaryInfoPersist(this.Id);
         }
 
         private static int OpenSummaryInfo(string packagePath, bool enableWrite)
         {
-            int summaryInfoHandle;
             int maxProperties = !enableWrite ? 0 : SummaryInfo.MAX_PROPERTIES;
-            uint ret = MsiApi.MsiGetSummaryInformation(
-                0,
-                packagePath,
-                (uint) maxProperties,
-                out summaryInfoHandle);
-            if (ret != 0)
-            {
-                if (ret == (uint) MsiError.FILE_NOT_FOUND ||
-                    ret == (uint) MsiError.ACCESS_DENIED)
-                {
-                    throw new FileNotFoundException(null, packagePath);
-                }
-                else
-                {
-                    throw InstallerException.ExceptionFromReturnCode(ret);
-                }
-            }
-            return summaryInfoHandle;
+            return MsiApi.MsiGetSummaryInformation(0, packagePath, (uint) maxProperties);
         }
     }
 }

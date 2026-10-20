@@ -264,13 +264,8 @@ namespace IsWiX.WindowsInstaller
                     {
                         if (this.summaryInfo == null || this.summaryInfo.IsClosed)
                         {
-                            int summaryInfoHandle;
                             int maxProperties = this.IsReadOnly ? 0 : SummaryInfo.MAX_PROPERTIES;
-                            uint ret = MsiApi.MsiGetSummaryInformation(this.Id, null, (uint) maxProperties, out summaryInfoHandle);
-                            if (ret != 0)
-                            {
-                                throw InstallerException.ExceptionFromReturnCode(ret);
-                            }
+                            int summaryInfoHandle = MsiApi.MsiGetSummaryInformation(this.Id, null, (uint) maxProperties);
                             this.summaryInfo = new SummaryInfo(summaryInfoHandle, true);
                         }
                     }
@@ -368,21 +363,12 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("otherDatabase");
             }
 
-            uint ret = MsiApi.MsiDatabaseMerge(this.Id, otherDatabase.Id, errorTable);
-            if (ret != 0)
+            switch (MsiApi.MsiDatabaseMerge(this.Id, otherDatabase.Id, errorTable))
             {
-                if (ret == (uint) MsiError.FUNCTION_FAILED)
-                {
+                case MsiApi.MergeOutcome.Conflict:
                     throw new MergeException(this, errorTable);
-                }
-                else if (ret == (uint) MsiError.DATATYPE_MISMATCH)
-                {
+                case MsiApi.MergeOutcome.SchemaMismatch:
                     throw new MergeException("Schema difference between the two databases.");
-                }
-                else
-                {
-                    throw InstallerException.ExceptionFromReturnCode(ret);
-                }
             }
         }
 
@@ -525,19 +511,13 @@ namespace IsWiX.WindowsInstaller
                     for (count = 0; ; count++)
                     {
                         // Avoid creating unnecessary Record objects by not calling View.Fetch().
-                        int recordHandle;
-                        uint ret = MsiApi.MsiViewFetch(view.Id, out recordHandle);
-                        if (ret == (uint)MsiError.NO_MORE_ITEMS)
+                        int? recordHandle = MsiApi.MsiViewFetch(view.Id);
+                        if (recordHandle == null)
                         {
                             break;
                         }
 
-                        if (ret != 0)
-                        {
-                            throw InstallerException.ExceptionFromReturnCode(ret);
-                        }
-
-                        MsiApi.MsiCloseHandle(recordHandle);
+                        MsiApi.MsiCloseHandle(recordHandle.Value);
                     }
                 }
             }
@@ -578,11 +558,7 @@ namespace IsWiX.WindowsInstaller
                 this.summaryInfo.Close();
                 this.summaryInfo = null;
             }
-            uint ret = MsiApi.MsiDatabaseCommit(this.Id);
-            if (ret != 0)
-            {
-                throw InstallerException.ExceptionFromReturnCode(ret);
-            }
+            MsiApi.MsiDatabaseCommit(this.Id);
         }
 
         /// <summary>
@@ -604,18 +580,7 @@ namespace IsWiX.WindowsInstaller
             }
 
             FileInfo file = new FileInfo(exportFilePath);
-            uint ret = MsiApi.MsiDatabaseExport(this.Id, table, file.DirectoryName, file.Name);
-            if (ret != 0)
-            {
-                if (ret == (uint) MsiError.BAD_PATHNAME)
-                {
-                    throw new FileNotFoundException(null, exportFilePath);
-                }
-                else
-                {
-                    throw InstallerException.ExceptionFromReturnCode(ret);
-                }
-            }
+            MsiApi.MsiDatabaseExport(this.Id, table, file.DirectoryName, file.Name);
         }
 
         /// <summary>
@@ -637,18 +602,7 @@ namespace IsWiX.WindowsInstaller
             }
 
             FileInfo file = new FileInfo(importFilePath);
-            uint ret = MsiApi.MsiDatabaseImport(this.Id, file.DirectoryName, file.Name);
-            if (ret != 0)
-            {
-                if (ret == (uint) MsiError.BAD_PATHNAME)
-                {
-                    throw new FileNotFoundException(null, importFilePath);
-                }
-                else
-                {
-                    throw InstallerException.ExceptionFromReturnCode(ret);
-                }
-            }
+            MsiApi.MsiDatabaseImport(this.Id, file.DirectoryName, file.Name);
         }
 
         /// <summary>
@@ -881,13 +835,7 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("outputPath");
             }
 
-            int hDb;
-            uint ret = MsiApi.MsiOpenDatabase(filePath, outputPath, out hDb);
-            if (ret != 0)
-            {
-                throw InstallerException.ExceptionFromReturnCode(ret);
-            }
-            return hDb;
+            return MsiApi.MsiOpenDatabase(filePath, outputPath);
         }
 
         private static int Open(string filePath, DatabaseOpenMode mode)
@@ -904,15 +852,7 @@ namespace IsWiX.WindowsInstaller
                 mode = (DatabaseOpenMode) patchMode;
             }
 
-            int hDb;
-            uint ret = MsiApi.MsiOpenDatabase(filePath, (IntPtr) mode, out hDb);
-            if (ret != 0)
-            {
-                throw InstallerException.ExceptionFromReturnCode(
-                    ret,
-                    String.Format(CultureInfo.InvariantCulture, "Database=\"{0}\"", filePath));
-            }
-            return hDb;
+            return MsiApi.MsiOpenDatabase(filePath, (IntPtr) mode);
         }
 
         /// <summary>

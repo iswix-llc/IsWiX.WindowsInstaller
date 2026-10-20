@@ -299,32 +299,16 @@ namespace IsWiX.WindowsInstaller
         /// <returns>list of column names or types</returns>
         private static IList<string> GetViewColumns(View view, bool types)
         {
-            int recordHandle;
             int typesFlag = types ? 1 : 0;
-            uint ret = MsiApi.MsiViewGetColumnInfo(
-                view.Id, (uint) typesFlag, out recordHandle);
-            if (ret != 0)
-            {
-                throw InstallerException.ExceptionFromReturnCode(ret);
-            }
+            int recordHandle = MsiApi.MsiViewGetColumnInfo(view.Id, (uint) typesFlag);
 
             using (Record rec = new Record(recordHandle, true, null))
             {
                 int count = rec.FieldCount;
                 IList<string> columnsList = new List<string>(count);
-
-                // Since we must be getting all strings of limited length, 
-                // this code is faster than calling rec.GetString(field).
                 for (int field = 1; field <= count; field++)
                 {
-                    uint bufSize = 256;
-                    StringBuilder buf = new StringBuilder((int) bufSize);
-                    ret = MsiApi.MsiRecordGetString(rec.Id, (uint) field, buf, ref bufSize);
-                    if (ret != 0)
-                    {
-                        throw InstallerException.ExceptionFromReturnCode(ret);
-                    }
-                    columnsList.Add(buf.ToString());
+                    columnsList.Add(MsiApi.MsiRecordGetString(rec.Id, (uint) field));
                 }
                 return columnsList;
             }

@@ -213,27 +213,7 @@ namespace IsWiX.WindowsInstaller
 
         internal static string GetSystemMessage(uint errorCode)
         {
-            const uint FORMAT_MESSAGE_IGNORE_INSERTS  = 0x00000200;
-            const uint FORMAT_MESSAGE_FROM_SYSTEM     = 0x00001000;
-
-            StringBuilder buf = new StringBuilder(1024);
-            uint formatCount = MsiApi.FormatMessage(
-                FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                IntPtr.Zero,
-                (uint) errorCode,
-                0,
-                buf,
-                (uint) buf.Capacity,
-                IntPtr.Zero);
-
-            if (formatCount != 0)
-            {
-                return buf.ToString().Trim();
-            }
-            else
-            {
-                return null;
-            }
+            return MsiApi.FormatMessage(errorCode)?.Trim();
         }
 
         internal void SaveErrorRecord()
