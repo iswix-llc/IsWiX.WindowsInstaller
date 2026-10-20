@@ -181,7 +181,6 @@ namespace IsWiX.WindowsInstaller
             this.reader = reader;
             this.filePath = filePath;
             this.openMode = openMode;
-            this.Mode = (DatabaseMode) openMode;
         }
 
         /// <summary>
@@ -859,7 +858,7 @@ namespace IsWiX.WindowsInstaller
             }
             try
             {
-                return OpenFile(filePath, (DatabaseMode) mode);
+                return OpenFile(filePath, mode);
             }
             catch (MsiErrorException e)
             {
@@ -873,7 +872,7 @@ namespace IsWiX.WindowsInstaller
         /// </summary>
         internal static Database OpenForSummary(string filePath)
         {
-            return new Database(OpenFile(filePath, DatabaseMode.Transact), filePath, DatabaseOpenMode.Transact);
+            return new Database(OpenFile(filePath, DatabaseOpenMode.Transact), filePath, DatabaseOpenMode.Transact);
         }
 
         /// <summary>
@@ -897,13 +896,11 @@ namespace IsWiX.WindowsInstaller
         private readonly Dictionary<string, long> newKeyRanks = new Dictionary<string, long>(StringComparer.Ordinal);
         private const long NewStringBase = 1L << 32;
 
-        internal DatabaseMode Mode { get; }
-
         /// <summary>Opens the file for reading. Failures are reported as engine error codes.</summary>
-        private static MsiDatabase OpenFile(string path, DatabaseMode mode)
+        private static MsiDatabase OpenFile(string path, DatabaseOpenMode mode)
         {
             // MSIDBOPEN_READONLY (0), MSIDBOPEN_TRANSACT (1) and MSIDBOPEN_DIRECT (2). Create modes are not supported yet.
-            if ((int) mode < 0 || (int) mode > 2)
+            if (mode != DatabaseOpenMode.ReadOnly && mode != DatabaseOpenMode.Transact && mode != DatabaseOpenMode.Direct)
             {
                 throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
             }
@@ -996,7 +993,7 @@ namespace IsWiX.WindowsInstaller
 
         internal void RequireWritable()
         {
-            if (this.Mode == DatabaseMode.ReadOnly)
+            if (this.openMode == DatabaseOpenMode.ReadOnly)
             {
                 throw MutableTable.Failed();
             }
@@ -1006,7 +1003,7 @@ namespace IsWiX.WindowsInstaller
         internal void Changed()
         {
             this.dirty = true;
-            if (this.Mode == DatabaseMode.Direct)
+            if (this.openMode == DatabaseOpenMode.Direct)
             {
                 this.WriteChanges();
             }
