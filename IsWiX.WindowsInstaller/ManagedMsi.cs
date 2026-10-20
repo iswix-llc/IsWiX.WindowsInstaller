@@ -330,12 +330,38 @@ namespace IsWiX.WindowsInstaller
 
             this.reader = MsiDatabase.Open(this.path);
             this.pendingStreams.Clear();
-            // The file now holds every change, so later reads come from it rather than from the cache.
-            this.tables.Clear();
+            // The file now holds every change, and the cached rows match it. Their binary cells must read the
+            // stream names the new file uses, which differ from the old names when a primary key changed.
+            foreach (MutableTable table in this.tables.Values)
+            {
+                RebindBinary(table);
+            }
             this.addedTables.Clear();
             this.removedTables.Clear();
             this.alteredTables.Clear();
             this.dirty = false;
+        }
+
+        /// <summary>Points each lazy binary cell of a table at its stream in the current file.</summary>
+        private void RebindBinary(MutableTable table)
+        {
+            var binaryColumns = Enumerable.Range(0, table.Columns.Count).Where(i => table.Columns[i].Type == MsiColumnType.Binary).ToArray();
+            if (binaryColumns.Length == 0)
+            {
+                return;
+            }
+            foreach (object?[] row in table.Rows)
+            {
+                foreach (int i in binaryColumns)
+                {
+                    if (row[i] is not LazyBinary lazy)
+                    {
+                        continue;
+                    }
+                    string? name = BinaryStreamName(table, row);
+                    row[i] = name == null ? null : new LazyBinary(lazy.Length, () => this.ReadPlainStream(name));
+                }
+            }
         }
 
         /// <summary>The stream holding a binary cell: "Table.key1.key2" from the primary-key values, or null if a key is null.</summary>
