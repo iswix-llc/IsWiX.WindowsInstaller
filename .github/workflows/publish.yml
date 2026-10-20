@@ -86,17 +86,17 @@ jobs:
         shell: pwsh
         run: dotnet pack IsWiX.WindowsInstaller/IsWiX.WindowsInstaller.csproj -c Release -o nupkg --no-build
 
-      - name: Sign NuGet package
-        shell: pwsh
-        run: |
-          ./sign code artifact-signing `
-            --azure-credential-type azure-cli `
-            --verbosity warning `
-            --timestamp-url http://timestamp.acs.microsoft.com `
-            --artifact-signing-endpoint https://eus.codesigning.azure.net/ `
-            --artifact-signing-account ISWIX-LLC `
-            --artifact-signing-certificate-profile IsWiX `
-            ./nupkg/*.nupkg
+#      - name: Sign NuGet package
+#        shell: pwsh
+#        run: |
+#          ./sign code artifact-signing `
+#            --azure-credential-type azure-cli `
+#            --verbosity warning `
+#            --timestamp-url http://timestamp.acs.microsoft.com `
+#            --artifact-signing-endpoint https://eus.codesigning.azure.net/ `
+#            --artifact-signing-account ISWIX-LLC `
+#            --artifact-signing-certificate-profile IsWiX `
+#            ./nupkg/*.nupkg
 
       - name: Get a short-lived NuGet key (trusted publishing)
         uses: NuGet/login@v1
