@@ -11,8 +11,76 @@ namespace IsWiX.WindowsInstaller
     /// <summary>
     /// Provides access to summary information of a Windows Installer database.
     /// </summary>
-    public class SummaryInfo : InstallerHandle
+    public class SummaryInfo : IDisposable
     {
+
+        private readonly EngineHandle handleRef;
+
+        /// <summary>
+        /// Checks if the handle is closed. When closed, method calls on the handle object may throw an <see cref="InvalidHandleException"/>.
+        /// </summary>
+        public bool IsClosed
+        {
+            get
+            {
+                return this.handleRef.IsClosed;
+            }
+        }
+
+        /// <summary>
+        /// Gets the engine handle id. Throws if the handle has been closed.
+        /// </summary>
+        internal int Id
+        {
+            get
+            {
+                return this.handleRef.Id;
+            }
+        }
+
+        /// <summary>
+        /// Closes the handle. After closing a handle, further method calls may throw an <see cref="InvalidHandleException"/>.
+        /// </summary>
+        public void Dispose()
+        {
+            this.Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        /// <summary>
+        /// Closes the handle. This method is merely an alias for the <see cref="Dispose()"/> method.
+        /// </summary>
+        public void Close()
+        {
+            this.Dispose();
+        }
+
+        /// <summary>
+        /// Tests whether this object is equal to another of the same type with the same engine handle id.
+        /// </summary>
+        public override bool Equals(object obj)
+        {
+            return obj != null && this.GetType() == obj.GetType() &&
+                this.Id == ((SummaryInfo) obj).Id;
+        }
+
+        /// <summary>
+        /// Gets a hash value derived from the engine handle id.
+        /// </summary>
+        public override int GetHashCode()
+        {
+            return this.Id.GetHashCode();
+        }
+
+        /// <summary>Releases the handle. Subclasses may override to release their own resources first.</summary>
+        /// <param name="disposing">True when called from Dispose.</param>
+        protected virtual void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                this.handleRef.Close();
+            }
+        }
         internal const int MAX_PROPERTIES = 20;
 
         /// <summary>
@@ -24,7 +92,7 @@ namespace IsWiX.WindowsInstaller
         /// <exception cref="FileNotFoundException">the package does not exist or could not be read</exception>
         /// <exception cref="InstallerException">the package is an invalid format</exception>
         /// <remarks><p>
-        /// The SummaryInfo object should be <see cref="InstallerHandle.Close"/>d after use.
+        /// The SummaryInfo object should be <see cref="Close"/>d after use.
         /// It is best that the handle be closed manually as soon as it is no longer
         /// needed, as leaving lots of unused handles open can degrade performance.
         /// </p><p>
@@ -32,12 +100,13 @@ namespace IsWiX.WindowsInstaller
         /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msigetsummaryinformation.asp">MsiGetSummaryInformation</a>
         /// </p></remarks>
         public SummaryInfo(string packagePath, bool enableWrite)
-            : base(SummaryInfo.OpenSummaryInfo(packagePath, enableWrite), true)
         {
+            this.handleRef = new EngineHandle(SummaryInfo.OpenSummaryInfo(packagePath, enableWrite), true);
         }
 
-        internal SummaryInfo(int handle, bool ownsHandle) : base(handle, ownsHandle)
+        internal SummaryInfo(int handle, bool ownsHandle)
         {
+            this.handleRef = new EngineHandle(handle, ownsHandle);
         }
 
         /// <summary>Gets or sets the Title summary information property.</summary>

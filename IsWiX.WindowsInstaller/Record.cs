@@ -20,8 +20,76 @@ namespace IsWiX.WindowsInstaller
     /// Record is directly returned from a query on a database. For other records, attempting
     /// to access a field by name will result in an InvalidOperationException.
     /// </p></remarks>
-    public class Record : InstallerHandle
+    public class Record : IDisposable
     {
+
+        private readonly EngineHandle handleRef;
+
+        /// <summary>
+        /// Checks if the handle is closed. When closed, method calls on the handle object may throw an <see cref="InvalidHandleException"/>.
+        /// </summary>
+        public bool IsClosed
+        {
+            get
+            {
+                return this.handleRef.IsClosed;
+            }
+        }
+
+        /// <summary>
+        /// Gets the engine handle id. Throws if the handle has been closed.
+        /// </summary>
+        internal int Id
+        {
+            get
+            {
+                return this.handleRef.Id;
+            }
+        }
+
+        /// <summary>
+        /// Closes the handle. After closing a handle, further method calls may throw an <see cref="InvalidHandleException"/>.
+        /// </summary>
+        public void Dispose()
+        {
+            this.Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        /// <summary>
+        /// Closes the handle. This method is merely an alias for the <see cref="Dispose()"/> method.
+        /// </summary>
+        public void Close()
+        {
+            this.Dispose();
+        }
+
+        /// <summary>
+        /// Tests whether this object is equal to another of the same type with the same engine handle id.
+        /// </summary>
+        public override bool Equals(object obj)
+        {
+            return obj != null && this.GetType() == obj.GetType() &&
+                this.Id == ((Record) obj).Id;
+        }
+
+        /// <summary>
+        /// Gets a hash value derived from the engine handle id.
+        /// </summary>
+        public override int GetHashCode()
+        {
+            return this.Id.GetHashCode();
+        }
+
+        /// <summary>Releases the handle. Subclasses may override to release their own resources first.</summary>
+        /// <param name="disposing">True when called from Dispose.</param>
+        protected virtual void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                this.handleRef.Close();
+            }
+        }
         private View view;
         private bool isFormatStringInvalid;
 
@@ -42,7 +110,7 @@ namespace IsWiX.WindowsInstaller
         /// <param name="fieldCount">Required number of fields, which may be 0.
         /// The maximum number of fields in a record is limited to 65535.</param>
         /// <remarks><p>
-        /// The Record object should be <see cref="InstallerHandle.Close"/>d after use.
+        /// The Record object should be <see cref="Close"/>d after use.
         /// It is best that the handle be closed manually as soon as it is no longer
         /// needed, as leaving lots of unused handles open can degrade performance.
         /// </p><p>
@@ -59,7 +127,7 @@ namespace IsWiX.WindowsInstaller
         /// </summary>
         /// <param name="fields">The values of the record fields.  The parameters should be of type Int16, Int32 or String</param>
         /// <remarks><p>
-        /// The Record object should be <see cref="InstallerHandle.Close"/>d after use.
+        /// The Record object should be <see cref="Close"/>d after use.
         /// It is best that the handle be closed manually as soon as it is no longer
         /// needed, as leaving lots of unused handles open can degrade performance.
         /// </p><p>
@@ -76,8 +144,8 @@ namespace IsWiX.WindowsInstaller
         }
 
         internal Record(int handle, bool ownsHandle, View view)
-            : base(handle, ownsHandle)
         {
+            this.handleRef = new EngineHandle(handle, ownsHandle);
             this.view = view;
         }
 
@@ -228,34 +296,6 @@ namespace IsWiX.WindowsInstaller
                     }
                 }
             }
-        }
-
-        /// <summary>
-        /// Creates a new Record object from an integer record handle.
-        /// </summary>
-        /// <remarks><p>
-        /// This method is only provided for interop purposes.  A Record object
-        /// should normally be obtained by calling <see cref="IsWiX.WindowsInstaller.View.Fetch"/>
-        /// other methods.
-        /// <p>The handle will be closed when this object is disposed or finalized.</p>
-        /// </p></remarks>
-        /// <param name="handle">Integer record handle</param>
-        /// <param name="ownsHandle">true to close the handle when this object is disposed or finalized</param>
-        public static Record FromHandle(IntPtr handle, bool ownsHandle)
-        {
-            return new Record((int) handle, ownsHandle, (View) null);
-        }
-        
-        /// <summary>
-        /// Sets all fields in a record to null.
-        /// </summary>
-        /// <remarks><p>
-        /// Win32 MSI API:
-        /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msirecordcleardata.asp">MsiRecordClearData</a>
-        /// </p></remarks>
-        public void Clear()
-        {
-            MsiApi.MsiRecordClearData(this.Id);
         }
 
         /// <summary>
@@ -853,9 +893,7 @@ namespace IsWiX.WindowsInstaller
                 return String.Empty;
             }
 
-            InstallerHandle session = provider as InstallerHandle;
-            int sessionHandle = session != null ? session.Id : 0;
-            return MsiApi.MsiFormatRecord(sessionHandle, this.Id);
+            return MsiApi.MsiFormatRecord(this.Id);
         }
 
         /// <summary>

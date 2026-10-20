@@ -162,7 +162,7 @@ namespace IsWiX.WindowsInstaller
         /// <item><see cref="FeatureInfo"/>.<see cref="FeatureInfo.GetCost"/></item>
         /// </list>
         /// </p><p>
-        /// The Record object should be <see cref="InstallerHandle.Close"/>d after use.
+        /// The Record object should be <see cref="Close"/>d after use.
         /// It is best that the handle be closed manually as soon as it is no longer
         /// needed, as leaving lots of unused handles open can degrade performance.
         /// </p><p>

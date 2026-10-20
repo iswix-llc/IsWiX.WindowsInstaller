@@ -339,7 +339,7 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        internal static string MsiFormatRecord(int hInstall, int hRecord)
+        internal static string MsiFormatRecord(int hRecord)
         {
             return Guard(() =>
             {

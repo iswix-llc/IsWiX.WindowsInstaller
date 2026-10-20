@@ -16,16 +16,84 @@ namespace IsWiX.WindowsInstaller
     /// it all replaceable parameters designated within the SQL query string.
     /// </summary>
     [SuppressMessage("Microsoft.Naming", "CA1710:IdentifiersShouldHaveCorrectSuffix")]
-    public class View : InstallerHandle, IEnumerable<Record>
+    public class View : IEnumerable<Record>, IDisposable
     {
+
+        private readonly EngineHandle handleRef;
+
+        /// <summary>
+        /// Checks if the handle is closed. When closed, method calls on the handle object may throw an <see cref="InvalidHandleException"/>.
+        /// </summary>
+        public bool IsClosed
+        {
+            get
+            {
+                return this.handleRef.IsClosed;
+            }
+        }
+
+        /// <summary>
+        /// Gets the engine handle id. Throws if the handle has been closed.
+        /// </summary>
+        internal int Id
+        {
+            get
+            {
+                return this.handleRef.Id;
+            }
+        }
+
+        /// <summary>
+        /// Closes the handle. After closing a handle, further method calls may throw an <see cref="InvalidHandleException"/>.
+        /// </summary>
+        public void Dispose()
+        {
+            this.Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        /// <summary>
+        /// Closes the handle. This method is merely an alias for the <see cref="Dispose()"/> method.
+        /// </summary>
+        public void Close()
+        {
+            this.Dispose();
+        }
+
+        /// <summary>
+        /// Tests whether this object is equal to another of the same type with the same engine handle id.
+        /// </summary>
+        public override bool Equals(object obj)
+        {
+            return obj != null && this.GetType() == obj.GetType() &&
+                this.Id == ((View) obj).Id;
+        }
+
+        /// <summary>
+        /// Gets a hash value derived from the engine handle id.
+        /// </summary>
+        public override int GetHashCode()
+        {
+            return this.Id.GetHashCode();
+        }
+
+        /// <summary>Releases the handle. Subclasses may override to release their own resources first.</summary>
+        /// <param name="disposing">True when called from Dispose.</param>
+        protected virtual void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                this.handleRef.Close();
+            }
+        }
         private Database database;
         private string sql;
         private IList<TableInfo> tables;
         private ColumnCollection columns;
 
         internal View(int handle, string sql, Database database)
-            : base(handle, true)
         {
+            this.handleRef = new EngineHandle(handle, true);
             this.sql = sql;
             this.database = database;
         }
@@ -183,7 +251,7 @@ namespace IsWiX.WindowsInstaller
         /// <exception cref="InstallerException">the View is not in an active state</exception>
         /// <exception cref="InvalidHandleException">the View handle is invalid</exception>
         /// <remarks><p>
-        /// The Record object should be <see cref="InstallerHandle.Close"/>d after use.
+        /// The Record object should be <see cref="Close"/>d after use.
         /// It is best that the handle be closed manually as soon as it is no longer
         /// needed, as leaving lots of unused handles open can degrade performance.
         /// </p><p>
@@ -532,7 +600,7 @@ namespace IsWiX.WindowsInstaller
         /// <returns>An enumerator of Record objects.</returns>
         /// <exception cref="InstallerException">The View was not <see cref="Execute(Record)"/>d before attempting the enumeration.</exception>
         /// <remarks><p>
-        /// Each Record object should be <see cref="InstallerHandle.Close"/>d after use.
+        /// Each Record object should be <see cref="Close"/>d after use.
         /// It is best that the handle be closed manually as soon as it is no longer
         /// needed, as leaving lots of unused handles open can degrade performance.
         /// However, note that it is not necessary to complete the enumeration just

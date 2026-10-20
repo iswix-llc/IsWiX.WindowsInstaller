@@ -21,7 +21,7 @@ namespace IsWiX.WindowsInstaller
         /// <remarks><p>
         /// The <paramref name="sqlFormat"/> parameter is formatted using <see cref="String.Format(string,object[])"/>.
         /// </p><p>
-        /// The View object should be <see cref="InstallerHandle.Close"/>d after use.
+        /// The View object should be <see cref="Close"/>d after use.
         /// It is best that the handle be closed manually as soon as it is no longer
         /// needed, as leaving lots of unused handles open can degrade performance.
         /// </p><p>

@@ -27,14 +27,73 @@ namespace IsWiX.WindowsInstaller
     ///		Records.</description></item> 
     /// <item><description>Update database rows of a Record object obtained by the Fetch method using
     ///		one of the <see cref="View.Modify"/> methods of the View.</description></item> 
-    /// <item><description>Release the query and any unfetched records by calling the <see cref="InstallerHandle.Close"/>
+    /// <item><description>Release the query and any unfetched records by calling the <see cref="Close"/>
     ///		method of the View.</description></item> 
     /// <item><description>Persist any database updates by calling the Commit method of the Database.
     ///		</description></item> 
     /// </list>
     /// </p></remarks>
-    public partial class Database : InstallerHandle
+    public partial class Database : IDisposable
     {
+
+        private readonly EngineHandle handleRef;
+        private readonly object summaryLock = new object();
+
+        /// <summary>
+        /// Checks if the handle is closed. When closed, method calls on the handle object may throw an <see cref="InvalidHandleException"/>.
+        /// </summary>
+        public bool IsClosed
+        {
+            get
+            {
+                return this.handleRef.IsClosed;
+            }
+        }
+
+        /// <summary>
+        /// Gets the engine handle id. Throws if the handle has been closed.
+        /// </summary>
+        internal int Id
+        {
+            get
+            {
+                return this.handleRef.Id;
+            }
+        }
+
+        /// <summary>
+        /// Closes the handle. After closing a handle, further method calls may throw an <see cref="InvalidHandleException"/>.
+        /// </summary>
+        public void Dispose()
+        {
+            this.Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        /// <summary>
+        /// Closes the handle. This method is merely an alias for the <see cref="Dispose()"/> method.
+        /// </summary>
+        public void Close()
+        {
+            this.Dispose();
+        }
+
+        /// <summary>
+        /// Tests whether this object is equal to another of the same type with the same engine handle id.
+        /// </summary>
+        public override bool Equals(object obj)
+        {
+            return obj != null && this.GetType() == obj.GetType() &&
+                this.Id == ((Database) obj).Id;
+        }
+
+        /// <summary>
+        /// Gets a hash value derived from the engine handle id.
+        /// </summary>
+        public override int GetHashCode()
+        {
+            return this.Id.GetHashCode();
+        }
         private string filePath;
         private DatabaseOpenMode openMode;
         private SummaryInfo summaryInfo;
@@ -50,7 +109,7 @@ namespace IsWiX.WindowsInstaller
         /// Because this constructor initiates database access, it cannot be used with a
         /// running installation.
         /// </p><p>
-        /// The Database object should be <see cref="InstallerHandle.Close"/>d after use.
+        /// The Database object should be <see cref="Close"/>d after use.
         /// It is best that the handle be closed manually as soon as it is no longer
         /// needed, as leaving lots of unused handles open can degrade performance.
         /// </p><p>
@@ -75,7 +134,7 @@ namespace IsWiX.WindowsInstaller
         /// be changed. Additionally, it is not persisted with the database. To create or modify the
         /// summary information for the output database it must be closed and re-opened.
         /// </p><p>
-        /// The Database object should be <see cref="InstallerHandle.Close"/>d after use.
+        /// The Database object should be <see cref="Close"/>d after use.
         /// It is best that the handle be closed manually as soon as it is no longer
         /// needed, as leaving lots of unused handles open can degrade performance.
         /// </p><p>
@@ -101,7 +160,7 @@ namespace IsWiX.WindowsInstaller
         /// Because this constructor initiates database access, it cannot be used with a
         /// running installation.
         /// </p><p>
-        /// The database object should be <see cref="InstallerHandle.Close"/>d after use.
+        /// The database object should be <see cref="Close"/>d after use.
         /// The finalizer will close the handle if it is still open, however due to the nondeterministic
         /// nature of finalization it is best that the handle be closed manually as soon as it is no
         /// longer needed, as leaving lots of unused handles open can degrade performance.
@@ -130,8 +189,8 @@ namespace IsWiX.WindowsInstaller
         /// <param name="openMode">Mode the handle was originally opened in</param>
         protected internal Database(
             int handle, bool ownsHandle, string filePath, DatabaseOpenMode openMode)
-            : base(handle, ownsHandle)
         {
+            this.handleRef = new EngineHandle(handle, ownsHandle);
             this.filePath = filePath;
             this.openMode = openMode;
         }
@@ -260,7 +319,7 @@ namespace IsWiX.WindowsInstaller
             {
                 if (this.summaryInfo == null || this.summaryInfo.IsClosed)
                 {
-                    lock (this.Sync)
+                    lock (this.summaryLock)
                     {
                         if (this.summaryInfo == null || this.summaryInfo.IsClosed)
                         {
@@ -272,25 +331,6 @@ namespace IsWiX.WindowsInstaller
                 }
                 return this.summaryInfo;
             }
-        }
-
-        /// <summary>
-        /// Creates a new Database object from an integer database handle.
-        /// </summary>
-        /// <remarks><p>
-        /// This method is only provided for interop purposes.  A Database object
-        /// should normally be obtained from <see cref="Session.Database"/> or
-        /// a public Database constructor.
-        /// </p></remarks>
-        /// <param name="handle">Integer database handle</param>
-        /// <param name="ownsHandle">true to close the handle when this object is disposed</param>
-        public static Database FromHandle(IntPtr handle, bool ownsHandle)
-        {
-            return new Database(
-                (int) handle,
-                ownsHandle,
-                null,
-                MsiApi.MsiGetDatabaseState((int) handle) == 1 ? DatabaseOpenMode.Direct : DatabaseOpenMode.ReadOnly);
         }
 
         /// <summary>
@@ -741,7 +781,7 @@ namespace IsWiX.WindowsInstaller
         /// custom action session, this method allows creation of a record that can
         /// work with a database other than the session database.
         /// </p><p>
-        /// The Record object should be <see cref="InstallerHandle.Close"/>d after use.
+        /// The Record object should be <see cref="Close"/>d after use.
         /// It is best that the handle be closed manually as soon as it is no longer
         /// needed, as leaving lots of unused handles open can degrade performance.
         /// </p><p>
@@ -775,7 +815,7 @@ namespace IsWiX.WindowsInstaller
         /// <param name="disposing">If true, the method has been called directly or
         /// indirectly by a user's code, so managed and unmanaged resources will be
         /// disposed. If false, only unmanaged resources will be disposed.</param>
-        protected override void Dispose(bool disposing)
+        protected virtual void Dispose(bool disposing)
         {
             if (!this.IsClosed &&
                 (this.OpenMode == DatabaseOpenMode.CreateDirect ||
@@ -786,7 +826,10 @@ namespace IsWiX.WindowsInstaller
                 this.Commit();
             }
 
-            base.Dispose(disposing);
+            if (disposing)
+            {
+                this.handleRef.Close();
+            }
 
             if (disposing)
             {
