@@ -368,7 +368,7 @@ namespace IsWiX.WindowsInstaller
                 {
                     MutableTable table = this.GetUserTable(stream.Key)
                         ?? throw new MsiErrorException((uint) NativeMethods.Error.INVALID_TABLE);
-                    changes.Add(PlanRowChange(table, stream.Value, transform));
+                    changes.AddRange(PlanRows(table, stream.Value, transform));
                 }
 
                 foreach (Action change in changes)
@@ -380,50 +380,91 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>
-        /// Plans the change for one transform table stream. The only layout supported is the one verified
-        /// against Windows Installer output: one row of three 2-byte words, the header, the key string id
-        /// and the value string id. A header with bit 0x0200 inserts the row. A header of 2 modifies the
-        /// Value column of the row with that key. Other layouts are rejected.
+        /// Plans the changes for one transform table stream. The stream is a sequence of rows of 2-byte words.
+        /// A header of 0 deletes the row and is followed by its key. A header with bit 0x0200 inserts the row,
+        /// and a header of 2 modifies the Value column of the row with that key. Insert and modify rows are
+        /// followed by the key and the value. Only this layout is supported, because it is the one checked
+        /// against Windows Installer output. Other layouts are rejected before the database changes.
         /// </summary>
-        private static Action PlanRowChange(MutableTable table, byte[] data, MsiTransform transform)
+        private static List<Action> PlanRows(MutableTable table, byte[] data, MsiTransform transform)
         {
             bool twoStringColumns = table.Columns.Count == 2
                 && table.Columns[0].Type == MsiColumnType.String
                 && table.Columns[1].Type == MsiColumnType.String;
-            if (!twoStringColumns || data.Length != 6)
+            if (!twoStringColumns)
             {
                 throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
             }
 
-            int header = data[0] | (data[1] << 8);
-            string? key = transform.GetString((uint) (data[2] | (data[3] << 8)));
-            string? value = transform.GetString((uint) (data[4] | (data[5] << 8)));
-            if (key == null)
+            var changes = new List<Action>();
+            int position = 0;
+            while (position < data.Length)
             {
-                throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
-            }
-
-            if ((header & 0x0200) != 0)
-            {
-                return () => table.Insert(new object?[] { key, value });
-            }
-
-            if (header != 2)
-            {
-                throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
-            }
-
-            return () =>
-            {
-                int index = table.FindByKey(new object?[] { key });
-                if (index < 0)
+                if (position + 2 > data.Length)
                 {
-                    throw MutableTable.Failed();
+                    throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
                 }
-                object?[] row = (object?[]) table.Rows[index].Clone();
-                row[1] = value;
-                table.Update(new[] { (index, row) });
-            };
+                int header = ReadWord(data, position);
+
+                if (header == 0)
+                {
+                    string? key = TransformString(data, position + 2, transform);
+                    position += 4;
+                    changes.Add(() =>
+                    {
+                        int index = table.FindByKey(new object?[] { key });
+                        if (index < 0)
+                        {
+                            throw MutableTable.Failed();
+                        }
+                        table.RemoveAt(index);
+                    });
+                    continue;
+                }
+
+                if (position + 6 > data.Length)
+                {
+                    throw new MsiErrorException((uint) NativeMethods.Error.INSTALL_TRANSFORM_FAILURE);
+                }
+                string? rowKey = TransformString(data, position + 2, transform);
+                string? value = TransformString(data, position + 4, transform);
+                position += 6;
+
+                if ((header & 0x0200) != 0)
+                {
+                    changes.Add(() => table.Insert(new object?[] { rowKey, value }));
+                }
+                else if (header == 2)
+                {
+                    changes.Add(() =>
+                    {
+                        int index = table.FindByKey(new object?[] { rowKey });
+                        if (index < 0)
+                        {
+                            throw MutableTable.Failed();
+                        }
+                        object?[] row = (object?[]) table.Rows[index].Clone();
+                        row[1] = value;
+                        table.Update(new[] { (index, row) });
+                    });
+                }
+                else
+                {
+                    throw new MsiErrorException((uint) NativeMethods.Error.CALL_NOT_IMPLEMENTED);
+                }
+            }
+            return changes;
+        }
+
+        private static int ReadWord(byte[] data, int position)
+        {
+            return data[position] | (data[position + 1] << 8);
+        }
+
+        /// <summary>A key string from the transform's pool. A key cannot be null.</summary>
+        private static string? TransformString(byte[] data, int position, MsiTransform transform)
+        {
+            return transform.GetString((uint) ReadWord(data, position));
         }
 
         public void Export(string table, string path)

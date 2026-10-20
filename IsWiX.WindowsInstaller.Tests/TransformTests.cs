@@ -40,32 +40,40 @@ public class TransformTests : IDisposable
         return rows;
     }
 
-    [Fact]
-    public void ChangeTransformSetsProductNameLikeWindows()
+    private static List<string> ApplyAndReadBack(string transform, string path)
     {
-        string path = CopyOfBase();
         using (var db = new Database(path, DatabaseOpenMode.Transact))
         {
-            db.ApplyTransform(TestFixtures.Path("test-change.mst"));
+            db.ApplyTransform(TestFixtures.Path(transform));
             db.Commit();
         }
 
         using var check = new Database(path);
-        Assert.Equal(ChangedRows, PropertyRows(check));
+        return PropertyRows(check);
+    }
+
+    [Fact]
+    public void ChangeTransformSetsProductNameLikeWindows()
+    {
+        Assert.Equal(ChangedRows, ApplyAndReadBack("test-change.mst", CopyOfBase()));
     }
 
     [Fact]
     public void AddTransformInsertsPropertyLikeWindows()
     {
-        string path = CopyOfBase();
-        using (var db = new Database(path, DatabaseOpenMode.Transact))
-        {
-            db.ApplyTransform(TestFixtures.Path("test-add.mst"));
-            db.Commit();
-        }
+        Assert.Equal(AddedRows, ApplyAndReadBack("test-add.mst", CopyOfBase()));
+    }
 
-        using var check = new Database(path);
-        Assert.Equal(AddedRows, PropertyRows(check));
+    [Fact]
+    public void DeleteTransformRemovesPropertyLikeWindows()
+    {
+        Assert.Equal(DeletedRows, ApplyAndReadBack("test-delete.mst", CopyOfBase()));
+    }
+
+    [Fact]
+    public void MultiTransformChangesAndInsertsLikeWindows()
+    {
+        Assert.Equal(MultiRows, ApplyAndReadBack("test-multi.mst", CopyOfBase()));
     }
 
     [Fact]
@@ -108,5 +116,39 @@ public class TransformTests : IDisposable
         "WixUIRMOption\tUseRM",
         "SecureCustomProperties\tBURNMSIMODIFY;BURNMSIREPAIR;BURNMSIUNINSTALL;WIX_DOWNGRADE_DETECTED;WIX_UPGRADE_DETECTED",
         "Add\tSomething",
+    };
+
+    private static readonly string[] DeletedRows =
+    {
+        "ALLUSERS\t1",
+        "ARPPRODUCTICON\tIcon.ico",
+        "DISABLEADVTSHORTCUTS\t1",
+        "ProductCode\t{3BE453B9-D0DF-4868-B2D0-4B2AB8B204DF}",
+        "ProductLanguage\t1033",
+        "ProductName\ttest",
+        "ProductVersion\t0.0.1",
+        "UpgradeCode\t{5BC56B19-5766-45AE-926A-8F0067411CBA}",
+        "DefaultUIFont\tWixUI_Font_Normal",
+        "ErrorDialog\tErrorDlg",
+        "WixUIRMOption\tUseRM",
+        "SecureCustomProperties\tBURNMSIMODIFY;BURNMSIREPAIR;BURNMSIUNINSTALL;WIX_DOWNGRADE_DETECTED;WIX_UPGRADE_DETECTED",
+    };
+
+    private static readonly string[] MultiRows =
+    {
+        "ALLUSERS\t1",
+        "ARPPRODUCTICON\tIcon.ico",
+        "DISABLEADVTSHORTCUTS\t1",
+        "Manufacturer\ttest1",
+        "ProductCode\t{3BE453B9-D0DF-4868-B2D0-4B2AB8B204DF}",
+        "ProductLanguage\t1033",
+        "ProductName\ttest",
+        "ProductVersion\t0.0.1",
+        "UpgradeCode\t{5BC56B19-5766-45AE-926A-8F0067411CBA}",
+        "DefaultUIFont\tWixUI_Font_Normal",
+        "ErrorDialog\tErrorDlg",
+        "WixUIRMOption\tUseRM",
+        "SecureCustomProperties\tBURNMSIMODIFY;BURNMSIREPAIR;BURNMSIUNINSTALL;WIX_DOWNGRADE_DETECTED;WIX_UPGRADE_DETECTED",
+        "New\tProperty",
     };
 }
