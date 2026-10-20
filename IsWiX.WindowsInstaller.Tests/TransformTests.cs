@@ -143,6 +143,22 @@ public class TransformTests : IDisposable
     }
 
     [Fact]
+    public void AddRemoveTransformInsertsAndDeletesLikeWindows()
+    {
+        string path = CopyOfBase();
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            db.ApplyTransform(TestFixtures.Path("test-addremove.mst"));
+            db.Commit();
+        }
+
+        // Windows keeps rows in key-pool order and the shim appends new rows, so compare the rows as sets.
+        using var check = new Database(path);
+        Assert.Equal(AddRemoveRows.OrderBy(r => r, StringComparer.Ordinal),
+            PropertyRows(check).OrderBy(r => r, StringComparer.Ordinal));
+    }
+
+    [Fact]
     public void TransformOnReadOnlyDatabaseFails()
     {
         using var db = new Database(CopyOfBase());
@@ -238,5 +254,22 @@ public class TransformTests : IDisposable
         "WixUIRMOption\tUseRM",
         "SecureCustomProperties\tBURNMSIMODIFY;BURNMSIREPAIR;BURNMSIUNINSTALL;WIX_DOWNGRADE_DETECTED;WIX_UPGRADE_DETECTED",
         "New\tProperty",
+    };
+
+    private static readonly string[] AddRemoveRows =
+    {
+        "ALLUSERS\t1",
+        "ARPPRODUCTICON\tIcon.ico",
+        "DISABLEADVTSHORTCUTS\t1",
+        "Manufacturer\ttest",
+        "test\t42",
+        "ProductCode\t{3BE453B9-D0DF-4868-B2D0-4B2AB8B204DF}",
+        "ProductLanguage\t1033",
+        "ProductName\ttest",
+        "ProductVersion\t0.0.1",
+        "UpgradeCode\t{5BC56B19-5766-45AE-926A-8F0067411CBA}",
+        "DefaultUIFont\tWixUI_Font_Normal",
+        "ErrorDialog\tErrorDlg",
+        "WixUIRMOption\tUseRM",
     };
 }
