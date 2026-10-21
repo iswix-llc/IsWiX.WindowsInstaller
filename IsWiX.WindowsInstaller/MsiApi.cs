@@ -512,16 +512,6 @@ namespace IsWiX.WindowsInstaller
             return null;
         }
 
-        internal static IStorage StgOpenStorage(string wcsName, uint grfMode)
-        {
-            throw new NotImplementedException();
-        }
-
-        internal static IStorage StgCreateDocfile(string wcsName, uint grfMode)
-        {
-            throw new NotImplementedException();
-        }
-
         /// <summary>Runs an operation, throwing a Windows Installer error as its matching exception.</summary>
         private static void Guard(Action operation, string? message = null)
         {
