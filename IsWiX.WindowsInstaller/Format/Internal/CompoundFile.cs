@@ -169,26 +169,63 @@ internal sealed class CompoundFile
     /// </summary>
     public bool TryFind(string name, out DirectoryEntry entry)
     {
-        const uint NoStream = 0xFFFFFFFF;
         entry = default!;
         if (_directory.Count == 0 || _directory[0].Type != 5)
             return false;
+        int id = FindNode(name, _directory[0].Child);
+        if (id < 0 || _directory[id].Type != 2)
+            return false;
+        entry = _directory[id].Entry;
+        return true;
+    }
 
-        uint id = _directory[0].Child;
+    /// <summary>
+    /// The streams directly inside a storage at the root. Nested storages are not
+    /// supported. Throws if the storage is not found.
+    /// </summary>
+    public IReadOnlyList<DirectoryEntry> StreamsInStorage(string storageName)
+    {
+        const uint NoStream = 0xFFFFFFFF;
+        if (_directory.Count == 0 || _directory[0].Type != 5)
+            throw new MsiFormatException("The compound file has no root entry.");
+        int storageId = FindNode(storageName, _directory[0].Child);
+        if (storageId < 0 || _directory[storageId].Type != 1)
+            throw new MsiFormatException($"Storage '{storageName}' was not found.");
+
+        var result = new List<DirectoryEntry>();
+        var visited = new HashSet<uint>();
+        var pending = new Stack<uint>();
+        pending.Push(_directory[storageId].Child);
+        while (pending.Count > 0)
+        {
+            uint id = pending.Pop();
+            if (id == NoStream || id >= _directory.Count || !visited.Add(id))
+                continue;
+            var node = _directory[(int)id];
+            pending.Push(node.Left);
+            pending.Push(node.Right);
+            if (node.Type == 2)
+                result.Add(node.Entry);
+            else
+                throw new NotSupportedException("Nested storages inside a storage are not supported.");
+        }
+        return result;
+    }
+
+    /// <summary>Searches the red-black tree from <paramref name="start"/>; returns the node index or -1.</summary>
+    private int FindNode(string name, uint start)
+    {
+        const uint NoStream = 0xFFFFFFFF;
+        uint id = start;
         for (int steps = 0; id != NoStream && id < _directory.Count && steps <= _directory.Count; steps++)
         {
             var node = _directory[(int)id];
             int cmp = CompareNames(name, node.Entry.RawName);
             if (cmp == 0)
-            {
-                if (node.Type != 2)
-                    return false;
-                entry = node.Entry;
-                return true;
-            }
+                return (int)id;
             id = cmp < 0 ? node.Left : node.Right;
         }
-        return false;
+        return -1;
     }
 
     private static int CompareNames(string a, string b)

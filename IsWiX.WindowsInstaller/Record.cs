@@ -8,6 +8,8 @@ namespace IsWiX.WindowsInstaller
     using System.Runtime.InteropServices;
     using System.Runtime.Versioning;
     using System.Diagnostics.CodeAnalysis;
+    using System.Linq;
+    using IsWiX.WindowsInstaller.Format.Internal;
 
     /// <summary>
     /// The Record object is a container for holding and transferring a variable number of values.
@@ -705,10 +707,6 @@ namespace IsWiX.WindowsInstaller
                 {
                     throw new NotSupportedException("Name column must be part of the Record in order to extract substorage.");
                 }
-                else if (!OperatingSystem.IsWindows())
-                {
-                    throw new PlatformNotSupportedException("Substorage extraction requires Windows.");
-                }
                 else
                 {
                     Record.ExtractSubStorage(this.view.Database.FilePath, this.GetString("Name"), filePath);
@@ -1030,39 +1028,19 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
-        [SupportedOSPlatform("windows")]
-        [SuppressMessage("Microsoft.Security", "CA2122:DoNotIndirectlyExposeMethodsWithLinkDemands")]
-        private static void ExtractSubStorage(string databaseFile, string storageName, string extractFile)
+        /// <summary>
+        /// Copies the streams of a storage in <paramref name="databaseFile"/> into a new
+        /// compound file at <paramref name="extractFile"/>, replacing any existing file.
+        /// </summary>
+        internal static void ExtractSubStorage(string databaseFile, string storageName, string extractFile)
         {
-            MsiApi.STGM openMode = MsiApi.STGM.READ | MsiApi.STGM.SHARE_DENY_WRITE;
-            IStorage storage = MsiApi.StgOpenStorage(databaseFile, (uint) openMode);
-            try
-            {
-                openMode = MsiApi.STGM.READ | MsiApi.STGM.SHARE_EXCLUSIVE;
-                IStorage subStorage = storage.OpenStorage(storageName, IntPtr.Zero, (uint) openMode, IntPtr.Zero, 0);
-                try
-                {
-                    openMode = MsiApi.STGM.CREATE | MsiApi.STGM.READWRITE | MsiApi.STGM.SHARE_EXCLUSIVE;
-                    IStorage newStorage = MsiApi.StgCreateDocfile(extractFile, (uint) openMode);
-                    try
-                    {
-                        subStorage.CopyTo(0, IntPtr.Zero, IntPtr.Zero, newStorage);
-                        newStorage.Commit(0);
-                    }
-                    finally
-                    {
-                        Marshal.ReleaseComObject(newStorage);
-                    }
-                }
-                finally
-                {
-                    Marshal.ReleaseComObject(subStorage);
-                }
-            }
-            finally
-            {
-                Marshal.ReleaseComObject(storage);
-            }
+            using var source = new FileStream(databaseFile, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var file = new CompoundFile(source);
+            var items = file.StreamsInStorage(storageName)
+                .Select(e => (e.RawName, e.Size, (Func<byte[]>)(() => file.ReadStream(e))))
+                .ToList();
+            using var output = new FileStream(extractFile, FileMode.Create, FileAccess.Write, FileShare.None);
+            CompoundFileWriter.Write(output, items);
         }
 
         private int FindColumn(string fieldName)
