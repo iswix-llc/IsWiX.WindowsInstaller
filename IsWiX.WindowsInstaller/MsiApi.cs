@@ -86,7 +86,8 @@ namespace IsWiX.WindowsInstaller
         internal static int MsiGetDatabaseState(Database database)
         {
             database.ThrowIfClosed();
-            return 0; // MSIDBSTATE_READ
+            // MSIDBSTATE_READ (0) for a read-only database, MSIDBSTATE_WRITE (1) for any other mode.
+            return database.OpenMode == DatabaseOpenMode.ReadOnly ? 0 : 1;
         }
 
         internal static View MsiDatabaseOpenView(Database database, string szQuery)
