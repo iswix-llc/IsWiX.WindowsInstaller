@@ -17,6 +17,13 @@ namespace IsWiX.WindowsInstaller
             Code = code;
         }
 
+        /// <summary>An error code with the exception that caused it, so its message is not lost.</summary>
+        public MsiErrorException(uint code, Exception innerException)
+            : base("Windows Installer error " + code.ToString(CultureInfo.InvariantCulture), innerException)
+        {
+            Code = code;
+        }
+
         public uint Code { get; }
     }
 }

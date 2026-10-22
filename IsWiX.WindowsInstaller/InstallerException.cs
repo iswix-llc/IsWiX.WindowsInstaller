@@ -178,6 +178,17 @@ namespace IsWiX.WindowsInstaller
             return ExceptionFromReturnCode(errorCode, null);
         }
 
+        /// <summary>
+        /// The exception for an internal error. When the error was raised for an underlying failure, such as a
+        /// file that could not be written, that failure's message is included so it is not lost.
+        /// </summary>
+        internal static Exception ExceptionFromReturnCode(MsiErrorException error, string? msg = null)
+        {
+            string? cause = error.InnerException?.Message;
+            string? combined = msg == null ? cause : cause == null ? msg : msg + " " + cause;
+            return ExceptionFromReturnCode(error.Code, combined!);
+        }
+
         internal static Exception ExceptionFromReturnCode(uint errorCode, string msg)
         {
             msg = Combine(GetSystemMessage(errorCode), msg);
