@@ -15,6 +15,30 @@ public class DatabaseTests
     }
 
     [Fact]
+    public void WritableModesAreNotReadOnlyAndSummaryInfoIsWritable()
+    {
+        string copy = Path.Combine(AppContext.BaseDirectory, "work", Guid.NewGuid().ToString("N") + ".msi");
+        Directory.CreateDirectory(Path.GetDirectoryName(copy)!);
+        File.Copy(TestFixtures.Path("basic.msi"), copy);
+        try
+        {
+            using (var db = new Database(copy, DatabaseOpenMode.Direct))
+            {
+                Assert.False(db.IsReadOnly);
+                db.SummaryInfo.Title = "Changed via Database.SummaryInfo";
+                db.Commit();
+            }
+
+            using var summary = new SummaryInfo(copy, false);
+            Assert.Equal("Changed via Database.SummaryInfo", summary.Title);
+        }
+        finally
+        {
+            File.Delete(copy);
+        }
+    }
+
+    [Fact]
     public void PrimaryKeysComeFromTheTableDefinition()
     {
         using var db = new Database(TestFixtures.Path("basic.msi"));
