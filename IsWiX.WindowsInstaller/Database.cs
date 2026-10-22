@@ -862,7 +862,7 @@ namespace IsWiX.WindowsInstaller
             }
             catch (MsiErrorException e)
             {
-                throw InstallerException.ExceptionFromReturnCode(e.Code,
+                throw InstallerException.ExceptionFromReturnCode(e,
                     String.Format(CultureInfo.InvariantCulture, "Database=\"{0}\"", filePath));
             }
         }
@@ -1155,7 +1155,7 @@ namespace IsWiX.WindowsInstaller
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is ArgumentException)
             {
-                throw MutableTable.Failed();
+                throw new MsiErrorException((uint) MsiError.FUNCTION_FAILED, e);
             }
             finally
             {

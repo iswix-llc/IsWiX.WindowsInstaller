@@ -232,7 +232,7 @@ namespace IsWiX.WindowsInstaller
             }
             catch (MsiErrorException e)
             {
-                throw InstallerException.ExceptionFromReturnCode(e.Code);
+                throw InstallerException.ExceptionFromReturnCode(e);
             }
         }
 
@@ -439,7 +439,7 @@ namespace IsWiX.WindowsInstaller
             }
             catch (MsiErrorException e)
             {
-                throw InstallerException.ExceptionFromReturnCode(e.Code);
+                throw InstallerException.ExceptionFromReturnCode(e);
             }
         }
 
@@ -522,7 +522,7 @@ namespace IsWiX.WindowsInstaller
             }
             catch (MsiErrorException e)
             {
-                throw InstallerException.ExceptionFromReturnCode(e.Code, message);
+                throw InstallerException.ExceptionFromReturnCode(e, message);
             }
         }
 
@@ -535,7 +535,7 @@ namespace IsWiX.WindowsInstaller
             }
             catch (MsiErrorException e)
             {
-                throw InstallerException.ExceptionFromReturnCode(e.Code, message);
+                throw InstallerException.ExceptionFromReturnCode(e, message);
             }
         }
     }
