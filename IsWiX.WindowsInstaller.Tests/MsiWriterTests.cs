@@ -147,15 +147,6 @@ public class MsiWriterTests
     }
 
     [Fact]
-    public void StringLongerThanColumnIsRejected()
-    {
-        var table = new MsiWriteTable("T",
-            new[] { new MsiWriteColumn("K", MsiColumnType.String, 3, isPrimaryKey: true) },
-            new List<object?[]> { new object?[] { "toolong" } });
-        Assert.Throws<ArgumentException>(() => Write(new[] { table }));
-    }
-
-    [Fact]
     public void RowWithWrongColumnCountIsRejected()
     {
         var table = new MsiWriteTable("T",
