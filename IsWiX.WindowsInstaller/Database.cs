@@ -1112,7 +1112,8 @@ namespace IsWiX.WindowsInstaller
                                 streams[streamName] = StreamSource.Of(data);
                             }
                         }
-                        copy[i] = null;
+                        // A present binary cell is written as 1, a flag that the stream exists, as Windows Installer does.
+                        copy[i] = row[i] == null ? null : 1;
                     }
                     rows.Add(copy);
                 }
