@@ -31,7 +31,7 @@ internal static class MsiWriter
     /// Writes an MSI like <see cref="Write"/>, but each plain stream is given by its length and a reader, so a large
     /// stream is read only while it is being written.
     /// </summary>
-    public static void WriteSources(Stream output, int codePage, IReadOnlyList<MsiWriteTable> tables, IReadOnlyDictionary<string, StreamSource>? streams = null)
+    public static void WriteSources(Stream output, int codePage, IReadOnlyList<MsiWriteTable> tables, IReadOnlyDictionary<string, StreamSource>? streams = null, IReadOnlyList<string?>? stringPoolSeed = null)
     {
         ArgumentNullException.ThrowIfNull(output);
         ArgumentNullException.ThrowIfNull(tables);
@@ -48,7 +48,7 @@ internal static class MsiWriter
                 throw new ArgumentException($"Table '{table.Name}' has no primary key column.");
         }
 
-        var pool = new StringPoolBuilder();
+        var pool = new StringPoolBuilder(stringPoolSeed);
 
         // Cells first: string cells get pool ids, so the pool's reference width is known before serializing.
         var prepared = tables.Select(t => PrepareTable(t, pool)).ToList();
@@ -66,6 +66,8 @@ internal static class MsiWriter
         };
         foreach (var table in prepared)
         {
+            // Windows Installer leaves out the stream of a table with no rows.
+            if (table.Cells.RowCount == 0) continue;
             streamList.Add(Bytes(StreamNameCodec.TablePrefix + StreamNameCodec.Encode(table.Name), SerializeColumns(table.Cells, width)));
         }
         if (streams != null)
@@ -261,6 +263,30 @@ internal static class MsiWriter
         private readonly Dictionary<string, uint> _ids = new(StringComparer.Ordinal);
         private readonly List<string> _strings = new();
         private readonly List<int> _refs = new();
+
+        /// <summary>
+        /// Starts the pool. Windows Installer keeps a string's id for the life of a database, and rejects a database
+        /// whose ids it does not recognize (error 2219), so a database that was loaded keeps its pool: pass its
+        /// entries as the seed and only strings it did not have are appended. Without a seed the pool starts with
+        /// the four entries every Windows-made database begins with: "Name", "Table", an empty entry and "Type".
+        /// </summary>
+        public StringPoolBuilder(IReadOnlyList<string?>? seed)
+        {
+            if (seed == null || seed.Count <= 1)
+            {
+                seed = new string?[] { null, "Name", "Table", null, "Type" };
+            }
+            for (int id = 1; id < seed.Count; id++)
+            {
+                string? entry = seed[id];
+                _strings.Add(entry ?? "");
+                _refs.Add(0);
+                if (!string.IsNullOrEmpty(entry))
+                {
+                    _ids.TryAdd(entry, (uint) _strings.Count);
+                }
+            }
+        }
 
         public uint Add(string text)
         {

@@ -1148,7 +1148,7 @@ namespace IsWiX.WindowsInstaller
             {
                 using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 {
-                    MsiWriter.WriteSources(output, codePage, writeTables, streams);
+                    MsiWriter.WriteSources(output, codePage, writeTables, streams, this.reader.StringPoolEntries);
                 }
                 this.reader.Dispose();
                 File.Move(temp, this.filePath, overwrite: true);

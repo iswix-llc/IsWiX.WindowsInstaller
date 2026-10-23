@@ -16,6 +16,9 @@ internal sealed class StringPool
 
     private readonly string?[] _strings;
 
+    /// <summary>The entries by id; index 0 is unused and an entry that is empty or unused in the file is null.</summary>
+    public IReadOnlyList<string?> Entries => _strings;
+
     public int BytesPerRef { get; }
     public int CodePage { get; }
 
