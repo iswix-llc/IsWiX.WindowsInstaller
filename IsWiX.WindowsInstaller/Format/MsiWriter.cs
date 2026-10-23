@@ -177,7 +177,9 @@ internal static class MsiWriter
             case MsiColumnType.Binary:
                 return 0x0900 | 0x0100 | (column.IsNullable ? 0x1000 : 0);
             default:
-                return 0x0100 | flags | column.Size;
+                // Windows Installer marks 16-bit integer columns with 0x0400 (0x0502, 0x1502, 0x2502). Without it
+                // the installer rejects the database as unopenable. 32-bit columns do not carry the bit.
+                return flags | column.Size | (column.Size == 2 ? 0x0400 : 0);
         }
     }
 
