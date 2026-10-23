@@ -167,4 +167,22 @@ public class MsiWriterTests
             new List<object?[]> { new object?[] { "a" } });
         Assert.Throws<ArgumentException>(() => Write(new[] { table }));
     }
+
+    [Fact]
+    public void WritesStringsLongerThanTheirColumnSize()
+    {
+        // Packages in the wild can hold values longer than the declared size (a File.Language list, say).
+        var table = new MsiWriteTable(
+            "File",
+            new[]
+            {
+                new MsiWriteColumn("File", MsiColumnType.String, 72, isPrimaryKey: true),
+                new MsiWriteColumn("Language", MsiColumnType.String, 20, isNullable: true),
+            },
+            new List<object?[]> { new object?[] { "F1", "1033,1031,1036,1040,1041,1042,1049,2052" } });
+
+        using var db = Write(new[] { table });
+
+        Assert.Equal("1033,1031,1036,1040,1041,1042,1049,2052", db.GetTable("File").Rows[0].GetString("Language"));
+    }
 }
