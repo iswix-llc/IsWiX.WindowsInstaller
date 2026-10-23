@@ -67,6 +67,27 @@ public class MsiWriterTests
     }
 
     [Fact]
+    public void SixteenBitIntegerColumnsCarryTheWindowsInstallerTypeBit()
+    {
+        var table = new MsiWriteTable(
+            "T",
+            new[]
+            {
+                new MsiWriteColumn("K", MsiColumnType.Integer, 2, isPrimaryKey: true),
+                new MsiWriteColumn("A", MsiColumnType.Integer, 2),
+                new MsiWriteColumn("B", MsiColumnType.Integer, 2, isNullable: true),
+                new MsiWriteColumn("C", MsiColumnType.Integer, 4),
+                new MsiWriteColumn("D", MsiColumnType.Integer, 4, isNullable: true),
+            },
+            new List<object?[]> { new object?[] { 1, 2, null, 3, null } });
+
+        using var db = Write(new[] { table });
+        var raw = db.GetTable("T").Columns.Select(c => c.RawType).ToArray();
+        Assert.Equal(new[] { 0x2502, 0x0502, 0x1502, 0x0104, 0x1104 }, raw);
+        Assert.Equal(2, db.GetTable("T").Rows[0]["A"]);
+    }
+
+    [Fact]
     public void RoundTripsBinaryAndPlainStreams()
     {
         var streams = new Dictionary<string, byte[]>
