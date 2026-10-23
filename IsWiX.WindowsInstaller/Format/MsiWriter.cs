@@ -215,8 +215,9 @@ internal static class MsiWriter
                 return unchecked((uint) number) ^ 0x80000000u;
             }
             default:
-                // Binary cells hold no value; the data is in its own stream.
-                return 0;
+                // A binary cell holds only a marker: 1 when its data is present in its own stream, 0 when null.
+                // Windows Installer writes 1 for every binary cell; a 0 makes it treat the stream as missing.
+                return value == null ? 0u : 1u;
         }
     }
 
