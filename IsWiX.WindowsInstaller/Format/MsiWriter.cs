@@ -190,8 +190,9 @@ internal static class MsiWriter
                 if (value == null) return 0;
                 if (value is not string text)
                     throw new ArgumentException($"'{table}' row {row}, column '{column.Name}' needs a string.");
-                if (column.Size > 0 && text.Length > column.Size)
-                    throw new ArgumentException($"'{table}' row {row}, column '{column.Name}' is longer than {column.Size}.");
+                // The declared size is not enforced here. It is checked when a value is inserted or updated, and
+                // real packages can hold values longer than their column's size, which Windows Installer reads
+                // without complaint. Refusing to write them would stop every change to such a package.
                 return pool.Add(text);
             }
             case MsiColumnType.Integer:
