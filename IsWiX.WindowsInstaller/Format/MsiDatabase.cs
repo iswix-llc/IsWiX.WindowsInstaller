@@ -81,6 +81,9 @@ internal sealed class MsiDatabase : IDisposable
     /// <summary>The Windows code page that the database strings are stored in.</summary>
     public int CodePage => _strings.CodePage;
 
+    /// <summary>The file's string pool entries by id (index 0 unused). Saving keeps these ids; see <see cref="MsiWriter"/>.</summary>
+    internal IReadOnlyList<string?> StringPoolEntries => _strings.Entries;
+
     /// <summary>The string pool index of a string in the file, or null if the file's pool does not have it.</summary>
     public uint? StringIdOf(string text) => _strings.IdOf(text);
 
