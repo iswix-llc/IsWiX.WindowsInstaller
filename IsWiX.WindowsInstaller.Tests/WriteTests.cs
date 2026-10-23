@@ -236,6 +236,77 @@ public class WriteTests : IDisposable
         Assert.Equal("found", record.GetString(2));
     }
 
+    // A table whose primary key has a nullable column, like Upgrade (UpgradeCode, VersionMin, VersionMax, ...).
+    private const string CreateNullableKey =
+        "CREATE TABLE `NullKey` (`Code` CHAR(32) NOT NULL, `Min` CHAR(32), `Value` CHAR(32) PRIMARY KEY `Code`, `Min`)";
+
+    private Database DatabaseWithNullKeyRow()
+    {
+        var db = new Database(Path.Combine(folder, "nullkey.msi"), DatabaseOpenMode.CreateDirect);
+        using (View create = db.OpenView(CreateNullableKey))
+        {
+            create.Execute();
+        }
+        using View view = db.OpenView("SELECT `Code`, `Min`, `Value` FROM `NullKey`");
+        view.Insert(new Record("a", null, "first"));
+        return db;
+    }
+
+    private static List<string> NullKeyRows(Database db)
+    {
+        using View view = db.OpenView("SELECT `Code`, `Min`, `Value` FROM `NullKey`");
+        view.Execute();
+        var rows = new List<string>();
+        for (Record? row = view.Fetch(); row != null; row = view.Fetch())
+        {
+            rows.Add(row.GetString(1) + "|" + (row.IsNull(2) ? "NULL" : row.GetString(2)) + "|" + row.GetString(3));
+        }
+        return rows;
+    }
+
+    [Fact]
+    public void ViewUpdateFindsRowWithNullKeyPart()
+    {
+        using var db = DatabaseWithNullKeyRow();
+        using View view = db.OpenView("SELECT `Code`, `Min`, `Value` FROM `NullKey`");
+
+        view.Update(new Record("a", null, "second"));
+
+        Assert.Equal(new[] { "a|NULL|second" }, NullKeyRows(db));
+    }
+
+    [Fact]
+    public void ViewDeleteFindsRowWithNullKeyPart()
+    {
+        using var db = DatabaseWithNullKeyRow();
+        using View view = db.OpenView("SELECT `Code`, `Min` FROM `NullKey`");
+
+        view.Delete(new Record("a", null));
+
+        Assert.Empty(NullKeyRows(db));
+    }
+
+    [Fact]
+    public void ViewAssignUpdatesRowWithNullKeyPartInsteadOfDuplicatingIt()
+    {
+        using var db = DatabaseWithNullKeyRow();
+        using View view = db.OpenView("SELECT `Code`, `Min`, `Value` FROM `NullKey`");
+
+        view.Assign(new Record("a", null, "assigned"));
+
+        Assert.Equal(new[] { "a|NULL|assigned" }, NullKeyRows(db));
+    }
+
+    [Fact]
+    public void ViewUpdateDoesNotMatchADifferentNullKeyPart()
+    {
+        using var db = DatabaseWithNullKeyRow();
+        using View view = db.OpenView("SELECT `Code`, `Min`, `Value` FROM `NullKey`");
+
+        // The stored row has a null Min, so a row with Min = "1.0" is a different row.
+        Assert.ThrowsAny<InstallerException>(() => view.Update(new Record("a", "1.0", "second")));
+    }
+
     [Fact]
     public void ViewRefreshOfMissingKeyFails()
     {

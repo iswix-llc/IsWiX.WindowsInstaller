@@ -46,10 +46,8 @@ namespace IsWiX.WindowsInstaller
         /// <summary>The row index holding the given primary key, or -1.</summary>
         public int FindByKey(object?[] key)
         {
-            if (key.Any(v => v == null))
-            {
-                return -1;
-            }
+            // A key column can be null (Upgrade.VersionMin is one), and a row is identified by its nulls
+            // as well as its values, so a null part of the key is compared like any other value.
             for (int i = 0; i < this.Rows.Count; i++)
             {
                 if (RowComparer.Instance.Equals(this.KeyOf(this.Rows[i]), key))
