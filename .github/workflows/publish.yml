@@ -116,5 +116,10 @@ jobs:
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git add IsWiX.WindowsInstaller/IsWiX.WindowsInstaller.csproj
           git commit -m "Release $v"
-          git tag "v$v"
-          git push origin main --follow-tags
+          if ($LASTEXITCODE -ne 0) { throw 'Committing the version bump failed.' }
+          git tag -a "v$v" -m "Release $v"
+          if ($LASTEXITCODE -ne 0) { throw "Tagging v$v failed." }
+          # Push the branch and the tag by name, together: --follow-tags alone skips lightweight tags,
+          # and --atomic keeps main and the tag from diverging if either is rejected.
+          git push --atomic origin main "refs/tags/v$v"
+          if ($LASTEXITCODE -ne 0) { throw "Pushing main and v$v failed." }
