@@ -2073,7 +2073,9 @@ namespace IsWiX.WindowsInstaller
                 {
                     row[i] = ParseIdtCell(columns[i], cells[i], folder);
                 }
-                table.Insert(row);
+                // Windows Installer does not hold an IDT string to its column width (merge module tables carry
+                // modularized identifiers longer than the column), so only the other checks apply here.
+                table.Insert(row, checkStringWidth: false);
             }
 
             this.PutTable(table);

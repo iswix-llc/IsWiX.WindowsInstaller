@@ -58,9 +58,14 @@ namespace IsWiX.WindowsInstaller
             return -1;
         }
 
-        public void Insert(object?[] row)
+        /// <param name="row">The row to add.</param>
+        /// <param name="checkStringWidth">
+        /// False to accept strings longer than their column's declared width, as Windows Installer does when it
+        /// imports an IDT (a modularized merge module identifier can be longer than the s64 column that holds it).
+        /// </param>
+        public void Insert(object?[] row, bool checkStringWidth = true)
         {
-            this.Validate(row);
+            this.Validate(row, null, checkStringWidth);
             this.EnsureKeys();
             if (!this.keys!.Add(this.KeyOf(row)))
             {
@@ -139,7 +144,7 @@ namespace IsWiX.WindowsInstaller
         /// Checks a row against the column definitions. Only the columns in <paramref name="only"/> are checked when
         /// it is given; the others may be null.
         /// </summary>
-        public void Validate(object?[] row, ISet<int>? only = null)
+        public void Validate(object?[] row, ISet<int>? only = null, bool checkStringWidth = true)
         {
             for (int i = 0; i < this.Columns.Count; i++)
             {
@@ -176,7 +181,7 @@ namespace IsWiX.WindowsInstaller
                         {
                             throw Mismatch();
                         }
-                        if (column.Size > 0 && text.Length > column.Size)
+                        if (checkStringWidth && column.Size > 0 && text.Length > column.Size)
                         {
                             throw Mismatch();
                         }

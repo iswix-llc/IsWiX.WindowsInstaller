@@ -179,6 +179,28 @@ public class WriteTests : IDisposable
     }
 
     [Fact]
+    public void ImportAcceptsStringsLongerThanTheColumnWidth()
+    {
+        // A merge module's modularized identifier can be longer than its s64 column; msi.dll imports it anyway.
+        string path = CopyOfFixture();
+        string idt = Path.Combine(folder, "Long.idt");
+        File.WriteAllText(idt, "Id\tName\r\ns5\ts3\r\nLong\tId\r\nrow\tmuch longer than three\r\n");
+
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            db.Import(idt);
+            db.Commit();
+        }
+
+        using var reopened = new Database(path);
+        using View select = reopened.OpenView("SELECT `Id`, `Name` FROM `Long`");
+        select.Execute();
+        using Record? row = select.Fetch();
+        Assert.NotNull(row);
+        Assert.Equal("much longer than three", row!.GetString(2));
+    }
+
+    [Fact]
     public void CodePageSetterIsWrittenOnCommit()
     {
         string path = CopyOfFixture();
