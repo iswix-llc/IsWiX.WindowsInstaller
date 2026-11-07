@@ -217,9 +217,9 @@ namespace IsWiX.WindowsInstaller.Format
 
         private static void WriteUInt32(Stream stream, uint value)
         {
-            Span<byte> bytes = stackalloc byte[4];
+            byte[] bytes = new byte[4];
             BinaryPrimitives.WriteUInt32LittleEndian(bytes, value);
-            stream.Write(bytes);
+            stream.Write(bytes, 0, bytes.Length);
         }
 
         private static Encoding ResolveEncoding(int codePage)

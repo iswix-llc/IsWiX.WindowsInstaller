@@ -31,10 +31,10 @@ internal static class MsiWriter
     /// Writes an MSI like <see cref="Write"/>, but each plain stream is given by its length and a reader, so a large
     /// stream is read only while it is being written.
     /// </summary>
-    public static void WriteSources(Stream output, int codePage, IReadOnlyList<MsiWriteTable> tables, IReadOnlyDictionary<string, StreamSource>? streams = null, IReadOnlyList<string?>? stringPoolSeed = null)
+    public static void WriteSources(Stream output, int codePage, IReadOnlyList<MsiWriteTable> tables, IReadOnlyDictionary<string, StreamSource>? streams = null, IReadOnlyList<string?>? stringPoolSeed = null, IReadOnlyList<CompoundFileWriter.Storage>? storages = null, byte[]? rootClsid = null)
     {
-        ArgumentNullException.ThrowIfNull(output);
-        ArgumentNullException.ThrowIfNull(tables);
+        if (output is null) throw new ArgumentNullException(nameof(output));
+        if (tables is null) throw new ArgumentNullException(nameof(tables));
 
         foreach (var table in tables)
         {
@@ -81,7 +81,7 @@ internal static class MsiWriter
             }
         }
 
-        CompoundFileWriter.Write(output, streamList);
+        CompoundFileWriter.Write(output, streamList, rootClsid, storages);
     }
 
     private static (string Name, long Length, Func<byte[]> Read) Bytes(string name, byte[] data) => (name, data.Length, () => data);
@@ -117,9 +117,44 @@ internal static class MsiWriter
 
     private sealed record SystemTables(Cells TablesCells, Cells ColumnsCells);
 
+    /// <summary>
+    /// Orders the rows by their primary key cells (string pool ids and encoded integers). Windows Installer looks rows
+    /// up by binary search, so a table stream with its rows in any other order is rejected by msi.dll.
+    /// </summary>
+    private static Cells SortByPrimaryKey(Cells cells, IReadOnlyList<MsiWriteColumn> columns)
+    {
+        var keyColumns = new List<int>();
+        for (int j = 0; j < columns.Count; j++)
+        {
+            if (columns[j].IsPrimaryKey) keyColumns.Add(j);
+        }
+        if (cells.RowCount < 2 || keyColumns.Count == 0) return cells;
+
+        var order = Enumerable.Range(0, cells.RowCount).ToArray();
+        Array.Sort(order, (a, b) =>
+        {
+            foreach (int j in keyColumns)
+            {
+                int c = cells.Columns[j][a].CompareTo(cells.Columns[j][b]);
+                if (c != 0) return c;
+            }
+            return a.CompareTo(b);
+        });
+
+        var sorted = new List<uint[]>(cells.Columns.Count);
+        foreach (uint[] column in cells.Columns)
+        {
+            var copy = new uint[column.Length];
+            for (int i = 0; i < order.Length; i++) copy[i] = column[order[i]];
+            sorted.Add(copy);
+        }
+        return new Cells(cells.Types, cells.Sizes, sorted, cells.RowCount);
+    }
+
     private static PreparedTable PrepareTable(MsiWriteTable table, StringPoolBuilder pool)
     {
-        return new PreparedTable(table.Name, Prepare(table.Columns, table.Rows, table.Name, pool));
+        Cells cells = Prepare(table.Columns, table.Rows, table.Name, pool);
+        return new PreparedTable(table.Name, SortByPrimaryKey(cells, table.Columns));
     }
 
     private static Cells Prepare(IReadOnlyList<MsiWriteColumn> columns, IReadOnlyList<object?[]> rows, string table, StringPoolBuilder pool)
@@ -145,7 +180,7 @@ internal static class MsiWriter
     {
         var tableNames = tables.Select(t => new object?[] { t.Name }).ToList();
         var tablesColumns = new[] { new MsiWriteColumn("Name", MsiColumnType.String, 64, isPrimaryKey: true) };
-        var tablesCells = Prepare(tablesColumns, tableNames, "_Tables", pool);
+        var tablesCells = SortByPrimaryKey(Prepare(tablesColumns, tableNames, "_Tables", pool), tablesColumns);
 
         var definitions = new List<object?[]>();
         foreach (var table in tables)
@@ -163,7 +198,7 @@ internal static class MsiWriter
             new MsiWriteColumn("Name", MsiColumnType.String, 64),
             new MsiWriteColumn("Type", MsiColumnType.Integer, 2),
         };
-        var columnsCells = Prepare(columnsColumns, definitions, "_Columns", pool);
+        var columnsCells = SortByPrimaryKey(Prepare(columnsColumns, definitions, "_Columns", pool), columnsColumns);
         return new SystemTables(tablesCells, columnsCells);
     }
 

@@ -22,6 +22,12 @@ namespace IsWiX.WindowsInstaller
 
         /// <summary>Create a new database, direct mode read/write.</summary>
         CreateDirect = 4,
+
+        /// <summary>
+        /// Flag combined with another mode to open or create a patch package (an .msp), which has a different
+        /// compound file class than an installation database.
+        /// </summary>
+        PatchFile = 32,
     }
 
     /// <summary>

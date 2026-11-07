@@ -697,11 +697,17 @@ namespace IsWiX.WindowsInstaller
             {
                 return null;
             }
-            return new Record(this.Result.Rows[this.position++], this);
+            Record fetched = new Record(this.Result.Rows[this.position], this);
+            if (this.Result.SourceRows != null)
+            {
+                fetched.SourceRow = this.Result.SourceRows[this.position];
+            }
+            this.position++;
+            return fetched;
         }
 
         /// <summary>Applies one record to the view's table, as MsiViewModify does.</summary>
-        internal void ModifyRow(int mode, object?[] values)
+        internal void ModifyRow(int mode, object?[] values, object?[]? source = null)
         {
             if (this.Query == null)
             {
@@ -712,7 +718,7 @@ namespace IsWiX.WindowsInstaller
                 ViewModify.Check(this.database, this.Query, mode, values);
                 return;
             }
-            ViewModify.Apply(this.database, this.Query, mode, values);
+            ViewModify.Apply(this.database, this.Query, mode, values, source);
         }
 
         /// <summary>The view's values for the row whose key the record names, as MsiViewModify's Refresh and Seek give them.</summary>

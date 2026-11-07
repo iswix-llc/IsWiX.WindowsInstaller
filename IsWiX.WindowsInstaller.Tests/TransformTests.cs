@@ -193,6 +193,25 @@ public class TransformTests : IDisposable
     }
 
     [Fact]
+    public void ViewTransformRecordsChangesInTransformViewTable()
+    {
+        string path = CopyOfBase();
+        using var db = new Database(path, DatabaseOpenMode.Transact);
+        db.ViewTransform(TestFixtures.Path("test-change.mst"));
+
+        using View view = db.OpenView("SELECT `Table`, `Column`, `Row`, `Data`, `Current` FROM `_TransformView`");
+        view.Execute();
+        var rows = new List<string>();
+        for (Record? row = view.Fetch(); row != null; row = view.Fetch())
+        {
+            rows.Add(row.GetString(1) + "|" + row.GetString(2) + "|" + (row.IsNull(3) ? "" : row.GetString(3)));
+        }
+
+        Assert.Contains(rows, r => r.StartsWith("Property|", StringComparison.Ordinal));
+        Assert.Contains(rows, r => r.StartsWith("Property|Value|ProductName", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void TransformOnReadOnlyDatabaseFails()
     {
         using var db = new Database(CopyOfBase());

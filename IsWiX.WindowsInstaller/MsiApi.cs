@@ -173,13 +173,22 @@ namespace IsWiX.WindowsInstaller
 
         internal static bool MsiDatabaseGenerateTransform(Database database, Database databaseReference, string szTransformFile, int iReserved1, int iReserved2)
         {
-            // Generating transforms is not implemented yet.
-            throw InstallerException.ExceptionFromReturnCode((uint) MsiError.CALL_NOT_IMPLEMENTED);
+            return Guard(() =>
+            {
+                database.ThrowIfClosed();
+                databaseReference.ThrowIfClosed();
+                return TransformGenerator.Generate(database, databaseReference, szTransformFile);
+            });
         }
 
         internal static void MsiCreateTransformSummaryInfo(Database database, Database databaseReference, string szTransformFile, int iErrorConditions, int iValidation)
         {
-            throw InstallerException.ExceptionFromReturnCode((uint) MsiError.CALL_NOT_IMPLEMENTED);
+            Guard(() =>
+            {
+                database.ThrowIfClosed();
+                databaseReference.ThrowIfClosed();
+                TransformGenerator.WriteSummary(database, databaseReference, szTransformFile, iErrorConditions, iValidation);
+            });
         }
 
         internal static void MsiDatabaseApplyTransform(Database database, string szTransformFile, int iErrorConditions)
@@ -187,7 +196,7 @@ namespace IsWiX.WindowsInstaller
             Guard(() =>
             {
                 database.ThrowIfClosed();
-                database.ApplyTransformFile(szTransformFile);
+                database.ApplyTransformFile(szTransformFile, iErrorConditions);
             });
         }
 
@@ -250,7 +259,7 @@ namespace IsWiX.WindowsInstaller
                 }
                 return;
             }
-            view.ModifyRow(iModifyMode, record.Values());
+            view.ModifyRow(iModifyMode, record.Values(), record.SourceRow);
         }
 
         /// <summary>

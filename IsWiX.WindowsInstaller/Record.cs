@@ -130,6 +130,9 @@ namespace IsWiX.WindowsInstaller
             }
         }
 
+        /// <summary>For a record fetched through a single-table view, the full table row it came from.</summary>
+        internal object?[]? SourceRow { get; set; }
+
         internal Record(int fieldCount, View view)
         {
             this.fields = new object?[fieldCount + 1];

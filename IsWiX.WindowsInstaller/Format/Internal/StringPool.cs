@@ -135,7 +135,7 @@ internal sealed class StringPool
         }
         catch (ArgumentException)
         {
-            return Encoding.Latin1;
+            return Compat.Latin1;
         }
     }
 }

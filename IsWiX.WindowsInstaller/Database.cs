@@ -8,6 +8,7 @@ namespace IsWiX.WindowsInstaller
     using System.Linq;
     using System.Text;
     using IsWiX.WindowsInstaller.Format;
+    using IsWiX.WindowsInstaller.Format.Internal;
 
     /// <summary>
     /// Accesses a Windows Installer database.
@@ -81,6 +82,7 @@ namespace IsWiX.WindowsInstaller
 
         private string filePath;
         private DatabaseOpenMode openMode;
+        private readonly bool isPatch;
         private SummaryInfo summaryInfo;
         private TableCollection tables;
         private IList<string> deleteOnClose;
@@ -169,7 +171,7 @@ namespace IsWiX.WindowsInstaller
         /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msiopendatabase.asp">MsiOpenDatabase</a>
         /// </p></remarks>
         public Database(string filePath, DatabaseOpenMode mode)
-            : this(Database.OpenReader(filePath, mode), filePath, mode)
+            : this(Database.OpenReader(filePath, (DatabaseOpenMode) ((int) mode & ~(int) DatabaseOpenMode.PatchFile)), filePath, mode)
         {
         }
 
@@ -180,7 +182,9 @@ namespace IsWiX.WindowsInstaller
         {
             this.reader = reader;
             this.filePath = filePath;
-            this.openMode = openMode;
+            this.isPatch = ((int) openMode & (int) DatabaseOpenMode.PatchFile) != 0
+                || Path.GetExtension(filePath).Equals(".msp", StringComparison.OrdinalIgnoreCase);
+            this.openMode = (DatabaseOpenMode) ((int) openMode & ~(int) DatabaseOpenMode.PatchFile);
         }
 
         /// <summary>
@@ -851,11 +855,6 @@ namespace IsWiX.WindowsInstaller
                 throw new ArgumentNullException("filePath");
             }
 
-            if (Path.GetExtension(filePath).Equals(".msp", StringComparison.Ordinal))
-            {
-                // Patch databases are not supported yet.
-                mode = (DatabaseOpenMode) ((int) mode | 32);
-            }
             try
             {
                 return OpenFile(filePath, mode);
@@ -887,6 +886,14 @@ namespace IsWiX.WindowsInstaller
 
         private readonly Dictionary<string, MutableTable> loadedTables = new Dictionary<string, MutableTable>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, byte[]> pendingStreams = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        private readonly Dictionary<string, PendingStorage> pendingStorages = new Dictionary<string, PendingStorage>(StringComparer.Ordinal);
+        private readonly HashSet<string> removedStorages = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>A storage added or replaced since the last write: its class id and its streams (raw names).</summary>
+        /// <summary>Class id of the root storage of a patch package, {000C1086-0000-0000-C000-000000000046}.</summary>
+        private static readonly byte[] PatchClsid = { 0x86, 0x10, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0, 0, 0, 0, 0, 0, 0x46 };
+
+        internal sealed record PendingStorage(byte[]? Clsid, List<KeyValuePair<string, byte[]>> Streams);
         private MsiDatabase reader;
         private bool dirty;
         private readonly List<string> addedTables = new List<string>();
@@ -898,10 +905,36 @@ namespace IsWiX.WindowsInstaller
 
         /// <summary>
         /// Writes an empty database with a Windows-1252 code page and a summary stream. The file is created new,
-        /// so an existing file is never replaced.
+        /// so an existing file is replaced only when it is itself a database.
         /// </summary>
         private static void CreateEmptyFile(string path)
         {
+            if (File.Exists(path))
+            {
+                // Windows Installer re-creates a file that is already a database, but never overwrites any other file.
+                bool isDatabase;
+                try
+                {
+                    MsiDatabase.Open(path).Dispose();
+                    isDatabase = true;
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is ArgumentException || e is MsiFormatException)
+                {
+                    isDatabase = false;
+                }
+                if (isDatabase)
+                {
+                    try
+                    {
+                        File.Delete(path);
+                    }
+                    catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                    {
+                        throw new MsiErrorException((uint) MsiError.ACCESS_DENIED);
+                    }
+                }
+            }
+
             var properties = new SortedDictionary<uint, SummaryValue>
             {
                 [SummaryStream.CodePageProperty] = new SummaryValue(SummaryStream.VtI2, number: 1252),
@@ -947,7 +980,7 @@ namespace IsWiX.WindowsInstaller
         /// <summary>Opens the file for reading. Failures are reported as engine error codes.</summary>
         private static MsiDatabase OpenFile(string path, DatabaseOpenMode mode)
         {
-            // MSIDBOPEN_READONLY (0) to MSIDBOPEN_CREATEDIRECT (4). Patch modes are not supported yet.
+            // MSIDBOPEN_READONLY (0) to MSIDBOPEN_CREATEDIRECT (4). The patch flag is removed by the caller.
             if (mode != DatabaseOpenMode.ReadOnly && mode != DatabaseOpenMode.Transact && mode != DatabaseOpenMode.Direct
                 && mode != DatabaseOpenMode.Create && mode != DatabaseOpenMode.CreateDirect)
             {
@@ -991,7 +1024,8 @@ namespace IsWiX.WindowsInstaller
         {
             return (this.reader.ContainsTable(name) && !this.IsRemoved(name))
                 || this.addedTables.Any(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase))
-                || IsSystemTable(name);
+                || IsSystemTable(name)
+                || (this.transformView != null && string.Equals(name, "_TransformView", StringComparison.Ordinal));
         }
 
         /// <summary>Finds a table by name, including the system tables _Tables, _Columns and _Streams.</summary>
@@ -1005,6 +1039,10 @@ namespace IsWiX.WindowsInstaller
                     return this.BuildColumnsTable();
                 case "_Streams":
                     return this.BuildStreamsTable();
+                case "_Storages":
+                    return this.BuildStoragesTable();
+                case "_TransformView" when this.transformView != null:
+                    return this.transformView;
                 default:
                     return this.GetUserTable(name)?.Snapshot;
             }
@@ -1028,6 +1066,46 @@ namespace IsWiX.WindowsInstaller
             MutableTable table = FromMsi(msiTable);
             this.loadedTables[table.Name] = table;
             return table;
+        }
+
+        /// <summary>The names of the storages in the database, including changes not yet committed.</summary>
+        internal List<string> StorageNames()
+        {
+            var names = new List<string>();
+            foreach (CompoundFile.StorageInfo info in this.reader.Storages)
+            {
+                if (!this.removedStorages.Contains(info.Name) && !this.pendingStorages.ContainsKey(info.Name))
+                {
+                    names.Add(info.Name);
+                }
+            }
+            names.AddRange(this.pendingStorages.Keys);
+            return names;
+        }
+
+        /// <summary>Adds or replaces a storage. The change is written on Commit, or straight away in Direct mode.</summary>
+        internal void PutStorage(string name, byte[]? clsid, List<KeyValuePair<string, byte[]>> streams)
+        {
+            this.RequireWritable();
+            this.removedStorages.Remove(name);
+            this.pendingStorages[name] = new PendingStorage(clsid, streams);
+            this.Changed();
+        }
+
+        internal bool HasStorage(string name)
+        {
+            return this.StorageNames().Contains(name, StringComparer.Ordinal);
+        }
+
+        internal void RemoveStorage(string name)
+        {
+            this.RequireWritable();
+            this.pendingStorages.Remove(name);
+            if (this.reader.Storages.Any(s => s.Name == name))
+            {
+                this.removedStorages.Add(name);
+            }
+            this.Changed();
         }
 
         /// <summary>A plain stream's bytes, including any change not yet committed.</summary>
@@ -1140,6 +1218,33 @@ namespace IsWiX.WindowsInstaller
                 streams[pending.Key] = StreamSource.Of(pending.Value);
             }
 
+            // Storages already in the file are kept unless removed or replaced; new ones come from memory.
+            var storages = new List<CompoundFileWriter.Storage>();
+            foreach (CompoundFile.StorageInfo info in this.reader.Storages)
+            {
+                if (this.removedStorages.Contains(info.Name) || this.pendingStorages.ContainsKey(info.Name))
+                {
+                    continue;
+                }
+                var kept = new List<(string Name, long Length, Func<byte[]> Read)>();
+                foreach (CompoundFile.DirectoryEntry entry in info.Streams)
+                {
+                    CompoundFile.DirectoryEntry source = entry;
+                    kept.Add((source.RawName, source.Size, () => this.reader.ReadStorageStream(source)));
+                }
+                storages.Add(new CompoundFileWriter.Storage(info.Name, info.Clsid, kept));
+            }
+            foreach (KeyValuePair<string, PendingStorage> pending in this.pendingStorages)
+            {
+                var added = new List<(string Name, long Length, Func<byte[]> Read)>();
+                foreach (KeyValuePair<string, byte[]> stream in pending.Value.Streams)
+                {
+                    byte[] bytes = stream.Value;
+                    added.Add((stream.Key, bytes.Length, () => bytes));
+                }
+                storages.Add(new CompoundFileWriter.Storage(pending.Key, pending.Value.Clsid, added));
+            }
+
             int codePage = this.ActiveCodePage;
             string directory = Path.GetDirectoryName(Path.GetFullPath(this.filePath)) ?? ".";
             string temp = Path.Combine(directory, "." + Path.GetFileName(this.filePath) + "." + Guid.NewGuid().ToString("N") + ".tmp");
@@ -1148,10 +1253,10 @@ namespace IsWiX.WindowsInstaller
             {
                 using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 {
-                    MsiWriter.WriteSources(output, codePage, writeTables, streams, this.reader.StringPoolEntries);
+                    MsiWriter.WriteSources(output, codePage, writeTables, streams, this.reader.StringPoolEntries, storages, this.isPatch ? PatchClsid : null);
                 }
                 this.reader.Dispose();
-                File.Move(temp, this.filePath, overwrite: true);
+                Compat.MoveOverwrite(temp, this.filePath);
                 moved = true;
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is ArgumentException)
@@ -1173,6 +1278,8 @@ namespace IsWiX.WindowsInstaller
 
             this.reader = MsiDatabase.Open(this.filePath);
             this.pendingStreams.Clear();
+            this.pendingStorages.Clear();
+            this.removedStorages.Clear();
             // The file now holds every change, and the cached rows match it. Their binary cells must read the
             // stream names the new file uses, which differ from the old names when a primary key changed.
             foreach (MutableTable table in this.loadedTables.Values)
@@ -1229,9 +1336,11 @@ namespace IsWiX.WindowsInstaller
 
         /// <summary>
         /// Applies a transform to the database. The transform is checked in full before any change is made,
-        /// so a transform in an unsupported layout leaves the database as it was.
+        /// so a transform in an unsupported layout leaves the database as it was. Error conditions in
+        /// <paramref name="errorConditions"/> (see <see cref="TransformErrors"/>) are ignored instead of failing, and
+        /// with the ViewTransform bit the changes are recorded in the temporary _TransformView table.
         /// </summary>
-        internal void ApplyTransformFile(string transformPath)
+        internal void ApplyTransformFile(string transformPath, int errorConditions = 0)
         {
             this.RequireWritable();
             MsiTransform transform;
@@ -1245,18 +1354,37 @@ namespace IsWiX.WindowsInstaller
             }
             catch (MsiFormatException)
             {
-                throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
+                throw TransformFailure("site 1");
             }
 
             using (transform)
             {
-                Dictionary<string, MutableTable> newTables = PlanNewTables(transform);
-                List<string> deletedTables = PlanDeletedTables(transform);
+                var suppress = (TransformErrors) errorConditions;
+                bool viewMode = (suppress & TransformErrors.ViewTransform) != 0;
+                var view = new List<object?[]>();
+
+                var addedColumns = new List<(string Table, SqlColumn Column)>();
+                Dictionary<string, MutableTable> newTables = PlanNewTables(transform, suppress, addedColumns);
+                List<string> deletedTables = PlanDeletedTables(transform, suppress);
                 var changes = new List<Action>();
                 foreach (MutableTable newTable in newTables.Values)
                 {
                     MutableTable toAdd = newTable;
-                    changes.Add(() => this.AddTable(toAdd));
+                    changes.Add(() =>
+                    {
+                        this.AddTable(toAdd);
+                        view.Add(new object?[] { toAdd.Name, "CREATE", null, null, null });
+                    });
+                }
+
+                foreach ((string Table, SqlColumn Column) added in addedColumns)
+                {
+                    (string Table, SqlColumn Column) captured = added;
+                    changes.Add(() =>
+                    {
+                        this.AddColumn(captured.Table, captured.Column, true);
+                        view.Add(new object?[] { captured.Table, captured.Column.Name, null, null, null });
+                    });
                 }
 
                 foreach (KeyValuePair<string, byte[]> stream in transform.Tables)
@@ -1267,33 +1395,69 @@ namespace IsWiX.WindowsInstaller
                     }
                     if (deletedTables.Contains(stream.Key, StringComparer.OrdinalIgnoreCase))
                     {
-                        throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
+                        throw TransformFailure("site 2");
                     }
-                    MutableTable table = this.GetUserTable(stream.Key)
-                        ?? (newTables.TryGetValue(stream.Key, out MutableTable? defined) ? defined : null)
-                        ?? throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
-                    changes.AddRange(PlanRows(table, stream.Value, transform, this.reader, this.newKeyRanks));
+                    string tableName = stream.Key;
+                    List<SqlColumn> columns;
+                    if (newTables.TryGetValue(tableName, out MutableTable? defined))
+                    {
+                        columns = defined.Columns.ToList();
+                    }
+                    else
+                    {
+                        MutableTable existing = this.GetUserTable(tableName) ?? throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
+                        columns = existing.Columns.ToList();
+                        columns.AddRange(addedColumns.Where(a => string.Equals(a.Table, tableName, StringComparison.OrdinalIgnoreCase)).Select(a => a.Column));
+                    }
+                    changes.AddRange(this.PlanRows(tableName, columns, stream.Value, transform, suppress, view));
                 }
 
                 foreach (string name in deletedTables)
                 {
                     string deleted = name;
-                    changes.Add(() => this.RemoveTable(deleted));
+                    changes.Add(() =>
+                    {
+                        this.RemoveTable(deleted);
+                        view.Add(new object?[] { deleted, "DROP", null, null, null });
+                    });
                 }
 
                 foreach (Action change in changes)
                 {
                     change();
                 }
+
+                if (viewMode)
+                {
+                    this.transformView = new SqlTable("_TransformView", TransformViewColumns, view);
+                }
                 this.Changed();
             }
         }
+
+        /// <summary>A transform that cannot be applied, with a description of where it went wrong.</summary>
+        private static MsiErrorException TransformFailure(string detail)
+        {
+            return new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE, new InvalidOperationException(detail));
+        }
+
+        private static readonly List<SqlColumn> TransformViewColumns = new List<SqlColumn>
+        {
+            new SqlColumn("_TransformView", "Table", MsiColumnType.String, 255, false, true, false),
+            new SqlColumn("_TransformView", "Column", MsiColumnType.String, 255, false, true, false),
+            new SqlColumn("_TransformView", "Row", MsiColumnType.String, 255, true, true, false),
+            new SqlColumn("_TransformView", "Data", MsiColumnType.String, 255, true, false, false),
+            new SqlColumn("_TransformView", "Current", MsiColumnType.String, 255, true, false, false),
+        };
+
+        /// <summary>The temporary _TransformView table of the last transform applied with the ViewTransform option.</summary>
+        private SqlTable? transformView;
 
         /// <summary>
         /// Reads the tables a transform deletes: rows of its _Tables stream with header 0 and the table name as key.
         /// The table must be in the database, and each table can be deleted once.
         /// </summary>
-        private List<string> PlanDeletedTables(MsiTransform transform)
+        private List<string> PlanDeletedTables(MsiTransform transform, TransformErrors suppress)
         {
             var deleted = new List<string>();
             byte[]? tablesStream = StreamNamed(transform, "_Tables");
@@ -1308,14 +1472,18 @@ namespace IsWiX.WindowsInstaller
                     continue;
                 }
                 string name = transform.GetString((uint) ReadWord(tablesStream, position + 2))
-                    ?? throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
+                    ?? throw TransformFailure("site 3");
                 if (!this.reader.ContainsTable(name) || this.IsRemoved(name))
                 {
+                    if ((suppress & TransformErrors.DelMissingTable) != 0)
+                    {
+                        continue;
+                    }
                     throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
                 }
                 if (deleted.Contains(name, StringComparer.OrdinalIgnoreCase))
                 {
-                    throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
+                    throw TransformFailure("site 4");
                 }
                 deleted.Add(name);
             }
@@ -1325,10 +1493,10 @@ namespace IsWiX.WindowsInstaller
         /// <summary>
         /// Reads the tables a transform defines, from its _Tables and _Columns streams. A table row is 2 words:
         /// the header 0x0101 and the table name. A column row is 5 words: the header 0x0401, the table name,
-        /// the column number, the column name and the type word. Columns are kept in the order they appear.
-        /// Other layouts are rejected.
+        /// the column number, the column name and the type word. The columns of a new table are kept in the order
+        /// they appear; a column of a table the database already has is a column the transform adds.
         /// </summary>
-        private Dictionary<string, MutableTable> PlanNewTables(MsiTransform transform)
+        private Dictionary<string, MutableTable> PlanNewTables(MsiTransform transform, TransformErrors suppress, List<(string Table, SqlColumn Column)> addedColumns)
         {
             var result = new Dictionary<string, MutableTable>(StringComparer.OrdinalIgnoreCase);
             byte[]? tablesStream = StreamNamed(transform, "_Tables");
@@ -1337,16 +1505,18 @@ namespace IsWiX.WindowsInstaller
             {
                 return result;
             }
-            if (tablesStream == null || (columnsStream != null && columnsStream.Length % 10 != 0) || tablesStream.Length % 4 != 0)
+            if ((columnsStream != null && columnsStream.Length % 10 != 0) || (tablesStream != null && tablesStream.Length % 4 != 0))
             {
                 throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
             }
+            byte[] tablesData = tablesStream ?? new byte[0];
             byte[] columnsData = columnsStream ?? new byte[0];
 
             var names = new List<string>();
-            for (int position = 0; position < tablesStream.Length; position += 4)
+            var skipped = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (int position = 0; position < tablesData.Length; position += 4)
             {
-                int header = ReadWord(tablesStream, position);
+                int header = ReadWord(tablesData, position);
                 if (header == 0)
                 {
                     // A deleted table. PlanDeletedTables reads it.
@@ -1356,11 +1526,17 @@ namespace IsWiX.WindowsInstaller
                 {
                     throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
                 }
-                string name = transform.GetString((uint) ReadWord(tablesStream, position + 2))
-                    ?? throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
+                string name = transform.GetString((uint) ReadWord(tablesData, position + 2))
+                    ?? throw TransformFailure("site 5");
+                if (this.ContainsTable(name) && (suppress & TransformErrors.AddExistingTable) != 0)
+                {
+                    // The table is already there: the transform's rows are applied to it, and its definition is ignored.
+                    skipped.Add(name);
+                    continue;
+                }
                 if (this.ContainsTable(name) || names.Contains(name, StringComparer.OrdinalIgnoreCase))
                 {
-                    throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
+                    throw TransformFailure("site 6");
                 }
                 names.Add(name);
             }
@@ -1373,22 +1549,30 @@ namespace IsWiX.WindowsInstaller
                     throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
                 }
                 string tableName = transform.GetString((uint) ReadWord(columnsData, position + 2))
-                    ?? throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
+                    ?? throw TransformFailure("site 7");
                 string columnName = transform.GetString((uint) ReadWord(columnsData, position + 6))
-                    ?? throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
-                if (!columns.TryGetValue(tableName, out List<SqlColumn>? list))
+                    ?? throw TransformFailure("site 8");
+                int number = ReadWord(columnsData, position + 4) & 0x7FFF;
+                if (skipped.Contains(tableName))
                 {
-                    throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
+                    continue;
                 }
 
-                // Bit 0x8000 marks a column the transform adds. Only string columns are supported.
-                int type = ReadWord(columnsData, position + 8) & 0x7FFF;
-                if ((type & 0x0800) == 0)
+                // Bit 0x8000 marks a column the transform adds.
+                var parsed = new MsiColumn(tableName, number, columnName, ReadWord(columnsData, position + 8) & 0x7FFF);
+                var column = new SqlColumn(tableName, columnName, parsed.Type, parsed.Size, parsed.IsNullable, parsed.IsPrimaryKey, parsed.IsLocalizable);
+                if (columns.TryGetValue(tableName, out List<SqlColumn>? list))
                 {
-                    throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
+                    list.Add(column);
                 }
-                list.Add(new SqlColumn(tableName, columnName, MsiColumnType.String, type & 0xFF,
-                    (type & 0x1000) != 0, (type & 0x2000) != 0, (type & 0x0200) != 0));
+                else if (this.ContainsTable(tableName) && !IsSystemTable(tableName))
+                {
+                    addedColumns.Add((tableName, column));
+                }
+                else
+                {
+                    throw TransformFailure("site 9");
+                }
             }
 
             foreach (string name in names)
@@ -1396,7 +1580,7 @@ namespace IsWiX.WindowsInstaller
                 List<SqlColumn> list = columns[name];
                 if (list.Count == 0 || !list.Any(c => c.IsPrimaryKey))
                 {
-                    throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
+                    throw TransformFailure("site 10");
                 }
                 result[name] = new MutableTable(name, list, new List<object?[]>());
             }
@@ -1494,14 +1678,14 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>ALTER TABLE ... ADD: a new column, empty in every existing row. A NOT NULL column needs an empty table.</summary>
-        internal void AddColumn(string name, SqlColumn column)
+        internal void AddColumn(string name, SqlColumn column, bool fromTransform = false)
         {
             if (IsSystemTable(name))
             {
                 throw MutableTable.Failed();
             }
             MutableTable table = this.GetUserTable(name) ?? throw MutableTable.Failed();
-            if (table.ColumnIndex(column.Name) >= 0 || (!column.IsNullable && table.Rows.Count > 0))
+            if (table.ColumnIndex(column.Name) >= 0 || (!fromTransform && !column.IsNullable && table.Rows.Count > 0))
             {
                 throw MutableTable.Failed();
             }
@@ -1555,130 +1739,222 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>
-        /// Plans the changes for one transform table stream. The stream is a sequence of rows of 2-byte words.
-        /// A header of 0 deletes the row and is followed by its key. A header with bit 0x0200 inserts a row of a
-        /// two-string-column table: the key and the value follow. Any other header modifies the row with that key:
-        /// bit i of the header marks column i, and one value word follows for each marked column, in column order.
-        /// Only string and 16-bit integer columns of tables with a single-column key are modified. Other layouts are
-        /// rejected before the database changes.
+        /// Plans the changes for one transform table stream, a sequence of rows of little-endian words. A string cell is
+        /// a string pool id, a 16-bit integer is its value plus 0x8000 and a 32-bit integer is its value plus 0x80000000;
+        /// 0 is null. A header of 0 deletes the row and is followed by the key cells. A header with bit 0 set inserts a
+        /// row: the column count is in the high byte and every cell follows. Any other header updates the row with the
+        /// key that follows: bit i marks column i, and one cell follows for each marked column, in column order.
+        /// Binary cells are not supported. Layouts that are not understood are rejected before the database changes.
         /// </summary>
-        private static List<Action> PlanRows(MutableTable table, byte[] data, MsiTransform transform, MsiDatabase reader, Dictionary<string, long> newKeyRanks)
+        private List<Action> PlanRows(string tableName, IReadOnlyList<SqlColumn> columns, byte[] data, MsiTransform transform, TransformErrors suppress, List<object?[]> view)
         {
             var changes = new List<Action>();
+            int refWidth = transform.StringRefWidth;
+            bool viewMode = (suppress & TransformErrors.ViewTransform) != 0;
+            int[] keyColumns = Enumerable.Range(0, columns.Count).Where(i => columns[i].IsPrimaryKey).ToArray();
+            bool twoStrings = columns.Count == 2 && columns[0].Type == MsiColumnType.String && columns[1].Type == MsiColumnType.String && keyColumns.Length == 1;
             int position = 0;
+
+            object? ReadCell(SqlColumn column)
+            {
+                switch (column.Type)
+                {
+                    case MsiColumnType.String:
+                    {
+                        if (position + refWidth > data.Length)
+                        {
+                            throw TransformFailure($"site 11: table {tableName}, stream position {position}, columns {columns.Count}");
+                        }
+                        uint id = refWidth == 3 ? (uint) (data[position] | (data[position + 1] << 8) | (data[position + 2] << 16)) : (uint) ReadWord(data, position);
+                        position += refWidth;
+                        return transform.GetString(id);
+                    }
+                    case MsiColumnType.Integer when column.Size == 4:
+                    {
+                        if (position + 4 > data.Length)
+                        {
+                            throw TransformFailure($"site 12: table {tableName}, stream position {position}, columns {columns.Count}");
+                        }
+                        uint raw = (uint) (data[position] | (data[position + 1] << 8) | (data[position + 2] << 16) | (data[position + 3] << 24));
+                        position += 4;
+                        return raw == 0 ? null : (object) unchecked((int) (raw - 0x80000000u));
+                    }
+                    case MsiColumnType.Integer:
+                    {
+                        if (position + 2 > data.Length)
+                        {
+                            throw TransformFailure($"site 13: table {tableName}, stream position {position}, columns {columns.Count}");
+                        }
+                        int word = ReadWord(data, position);
+                        position += 2;
+                        return TransformInteger(word);
+                    }
+                    default:
+                        throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
+                }
+            }
+
             while (position < data.Length)
             {
-                if (position + 4 > data.Length)
+                if (position + 2 > data.Length)
                 {
-                    throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
+                    throw TransformFailure($"site 14: table {tableName}, stream position {position}, columns {columns.Count}");
                 }
                 int header = ReadWord(data, position);
-                string? key = TransformString(data, position + 2, transform);
+                position += 2;
 
                 if (header == 0)
                 {
-                    position += 4;
-                    changes.Add(() => table.RemoveAt(RequireRow(table, key)));
-                    continue;
-                }
-
-                if ((header & 0x0200) != 0)
-                {
-                    RequireTwoStringColumns(table);
-                    if (position + 6 > data.Length)
+                    var key = new object?[keyColumns.Length];
+                    for (int n = 0; n < keyColumns.Length; n++)
                     {
-                        throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
+                        key[n] = ReadCell(columns[keyColumns[n]]);
                     }
-                    string? value = TransformString(data, position + 4, transform);
-                    int keyId = ReadWord(data, position + 2);
-                    position += 6;
-                    changes.Add(() => InsertRanked(table, new object?[] { key, value }, keyId, reader, newKeyRanks));
+                    changes.Add(() =>
+                    {
+                        MutableTable table = this.GetUserTable(tableName) ?? throw MutableTable.Failed();
+                        int index = table.FindByKey(key);
+                        if (index < 0)
+                        {
+                            if ((suppress & TransformErrors.DelMissingRow) != 0)
+                            {
+                                if (viewMode)
+                                {
+                                    view.Add(new object?[] { tableName, "DELETE", KeyText(key), null, null });
+                                }
+                                return;
+                            }
+                            throw MutableTable.Failed();
+                        }
+                        table.RemoveAt(index);
+                        view.Add(new object?[] { tableName, "DELETE", KeyText(key), null, null });
+                    });
                     continue;
                 }
 
-                if ((header & 0x0001) != 0 || (header & 0xFE00) != 0 || !HasSingleKey(table))
+                if ((header & 0x0001) != 0)
                 {
-                    throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
+                    if ((header >> 8) != columns.Count)
+                    {
+                        throw TransformFailure($"site 15: table {tableName}, stream position {position}, columns {columns.Count}");
+                    }
+                    int keyId = data.Length >= position + 2 ? ReadWord(data, position) : 0;
+                    var row = new object?[columns.Count];
+                    for (int n = 0; n < columns.Count; n++)
+                    {
+                        row[n] = ReadCell(columns[n]);
+                    }
+                    object?[] key = keyColumns.Select(i => row[i]).ToArray();
+                    changes.Add(() =>
+                    {
+                        MutableTable table = this.GetUserTable(tableName) ?? throw MutableTable.Failed();
+                        if (table.FindByKey(key) >= 0)
+                        {
+                            if ((suppress & TransformErrors.AddExistingRow) != 0)
+                            {
+                                if (viewMode)
+                                {
+                                    view.Add(new object?[] { tableName, "INSERT", KeyText(key), null, null });
+                                }
+                                return;
+                            }
+                            throw MutableTable.Failed();
+                        }
+                        if (twoStrings && table.Columns.Count == 2)
+                        {
+                            InsertRanked(table, row, keyId, this.reader, this.newKeyRanks);
+                        }
+                        else
+                        {
+                            table.Insert(row);
+                        }
+                        view.Add(new object?[] { tableName, "INSERT", KeyText(key), null, null });
+                    });
+                    continue;
                 }
-                var columns = new List<int>();
+
+                var changed = new List<int>();
                 for (int bit = 1; bit < 16; bit++)
                 {
                     if ((header & (1 << bit)) != 0)
                     {
-                        columns.Add(bit);
+                        changed.Add(bit);
                     }
                 }
-                foreach (int column in columns)
+                if (changed.Count == 0 || changed.Any(c => c >= columns.Count) || keyColumns.Length == 0)
                 {
-                    if (column >= table.Columns.Count || !IsModifiable(table.Columns[column]))
-                    {
-                        throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
-                    }
+                    throw TransformFailure($"site 16: table {tableName}, stream position {position}, columns {columns.Count}");
                 }
-                int end = position + 4 + 2 * columns.Count;
-                if (columns.Count == 0 || end > data.Length)
+                var updateKey = new object?[keyColumns.Length];
+                for (int n = 0; n < keyColumns.Length; n++)
                 {
-                    throw new MsiErrorException((uint) MsiError.INSTALL_TRANSFORM_FAILURE);
+                    updateKey[n] = ReadCell(columns[keyColumns[n]]);
                 }
-                var values = new object?[columns.Count];
-                for (int n = 0; n < columns.Count; n++)
+                var values = new object?[changed.Count];
+                for (int n = 0; n < changed.Count; n++)
                 {
-                    values[n] = table.Columns[columns[n]].Type == MsiColumnType.String
-                        ? TransformString(data, position + 4 + 2 * n, transform)
-                        : TransformInteger(ReadWord(data, position + 4 + 2 * n));
+                    values[n] = ReadCell(columns[changed[n]]);
                 }
-                position = end;
+                List<int> changedColumns = changed;
                 changes.Add(() =>
                 {
-                    int index = RequireRow(table, key);
-                    object?[] row = (object?[]) table.Rows[index].Clone();
-                    for (int n = 0; n < columns.Count; n++)
+                    MutableTable table = this.GetUserTable(tableName) ?? throw MutableTable.Failed();
+                    int index = table.FindByKey(updateKey);
+                    if (index < 0)
                     {
-                        row[columns[n]] = values[n];
+                        if ((suppress & TransformErrors.UpdateMissingRow) != 0)
+                        {
+                            if (viewMode)
+                            {
+                                // The view shows what the transform would change even where the row is not there to change.
+                                for (int n = 0; n < changedColumns.Count; n++)
+                                {
+                                    view.Add(new object?[] { tableName, table.Columns[changedColumns[n]].Name, KeyText(updateKey), CellText(values[n]), null });
+                                }
+                            }
+                            return;
+                        }
+                        throw MutableTable.Failed();
+                    }
+                    object?[] before = table.Rows[index];
+                    object?[] row = (object?[]) before.Clone();
+                    for (int n = 0; n < changedColumns.Count; n++)
+                    {
+                        row[changedColumns[n]] = values[n];
                     }
                     table.Update(new[] { (index, row) });
+                    for (int n = 0; n < changedColumns.Count; n++)
+                    {
+                        int column = changedColumns[n];
+                        view.Add(new object?[] { tableName, table.Columns[column].Name, KeyText(updateKey), CellText(values[n]), CellText(before[column]) });
+                    }
                 });
             }
             return changes;
         }
 
-        /// <summary>A column a transform can change in place: a string column, or a 16-bit integer column.</summary>
-        private static bool IsModifiable(SqlColumn column)
+        /// <summary>A cell as the _TransformView table shows it.</summary>
+        private static string? CellText(object? value)
         {
-            return column.Type == MsiColumnType.String || (column.Type == MsiColumnType.Integer && column.Size is 0 or 2);
+            return value switch
+            {
+                null => null,
+                string text => text,
+                int number => number.ToString(CultureInfo.InvariantCulture),
+                _ => Convert.ToString(value, CultureInfo.InvariantCulture),
+            };
+        }
+
+        /// <summary>The key cells of a row joined by tabs, as the _TransformView table shows a row.</summary>
+        private static string KeyText(object?[] key)
+        {
+            return string.Join("\t", key.Select(c => CellText(c) ?? string.Empty));
         }
 
         /// <summary>Decodes a 16-bit integer cell of a transform. The value has a 0x8000 bias, and 0 is null.</summary>
         private static object? TransformInteger(int word)
         {
             return word == 0 ? null : (object) (word - 0x8000);
-        }
-
-        /// <summary>The index of the row with the given key. A key that is not in the table fails the transform.</summary>
-        private static int RequireRow(MutableTable table, string? key)
-        {
-            int index = table.FindByKey(new object?[] { key });
-            if (index < 0)
-            {
-                throw MutableTable.Failed();
-            }
-            return index;
-        }
-
-        private static bool HasSingleKey(MutableTable table)
-        {
-            return table.Columns.Count > 0 && table.Columns[0].IsPrimaryKey && table.Columns.Count(c => c.IsPrimaryKey) == 1;
-        }
-
-        private static void RequireTwoStringColumns(MutableTable table)
-        {
-            bool ok = table.Columns.Count == 2
-                && table.Columns[0].Type == MsiColumnType.String
-                && table.Columns[1].Type == MsiColumnType.String;
-            if (!ok)
-            {
-                throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
-            }
         }
 
         private static int ReadWord(byte[] data, int position)
@@ -1701,7 +1977,7 @@ namespace IsWiX.WindowsInstaller
             string text;
             if (table == "_ForceCodepage")
             {
-                text = "CodePage\r\ni2\r\n" + this.ActiveCodePage.ToString(CultureInfo.InvariantCulture) + "\r\n";
+                text = "\r\n\r\n" + this.ActiveCodePage.ToString(CultureInfo.InvariantCulture) + "\t_ForceCodepage\r\n";
             }
             else
             {
@@ -1757,7 +2033,12 @@ namespace IsWiX.WindowsInstaller
                 throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
             }
             string tableName = keyLine[0];
-            if (tableName.StartsWith('_') || tableName.Length == 0)
+            if (tableName == "_SummaryInformation")
+            {
+                this.ImportSummaryInformation(lines);
+                return;
+            }
+            if (tableName.Length == 0 || IsSystemTable(tableName) || tableName == "_Storages" || tableName == "_ForceCodepage")
             {
                 throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
             }
@@ -1795,6 +2076,59 @@ namespace IsWiX.WindowsInstaller
 
             this.PutTable(table);
             this.Changed();
+        }
+
+        /// <summary>
+        /// Imports a _SummaryInformation IDT: rows of "PropertyId" and "Value". Values are applied to the summary
+        /// information and written when the database is committed.
+        /// </summary>
+        private void ImportSummaryInformation(string[] lines)
+        {
+            SummaryInfo info = this.SummaryInfo;
+            for (int line = 3; line < lines.Length; line++)
+            {
+                if (lines[line].Length == 0)
+                {
+                    continue;
+                }
+                string[] cells = lines[line].Split('\t');
+                if (cells.Length != 2 || !int.TryParse(cells[0], NumberStyles.None, CultureInfo.InvariantCulture, out int id))
+                {
+                    throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
+                }
+                string value = cells[1];
+                switch (id)
+                {
+                    case 1: info.CodePage = short.Parse(value, CultureInfo.InvariantCulture); break;
+                    case 2: info.Title = value; break;
+                    case 3: info.Subject = value; break;
+                    case 4: info.Author = value; break;
+                    case 5: info.Keywords = value; break;
+                    case 6: info.Comments = value; break;
+                    case 7: info.Template = value; break;
+                    case 8: info.LastSavedBy = value; break;
+                    case 9: info.RevisionNumber = value; break;
+                    case 11: info.LastPrintTime = ParseSummaryTime(value); break;
+                    case 12: info.CreateTime = ParseSummaryTime(value); break;
+                    case 13: info.LastSaveTime = ParseSummaryTime(value); break;
+                    case 14: info.PageCount = int.Parse(value, CultureInfo.InvariantCulture); break;
+                    case 15: info.WordCount = int.Parse(value, CultureInfo.InvariantCulture); break;
+                    case 16: info.CharacterCount = int.Parse(value, CultureInfo.InvariantCulture); break;
+                    case 18: info.CreatingApp = value; break;
+                    case 19: info.Security = int.Parse(value, CultureInfo.InvariantCulture); break;
+                    default: throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
+                }
+            }
+            this.Changed();
+        }
+
+        private static DateTime ParseSummaryTime(string value)
+        {
+            if (!DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime time))
+            {
+                throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
+            }
+            return time;
         }
 
         /// <summary>The database code page. A value set here replaces the file's when the database is committed.</summary>
@@ -1839,6 +2173,11 @@ namespace IsWiX.WindowsInstaller
             switch (letter)
             {
                 case 'i':
+                    if (size == 0)
+                    {
+                        // Windows Installer accepts a width of 0 and stores a short integer, as the WiX patch tables use it.
+                        size = 2;
+                    }
                     if (size != 2 && size != 4)
                     {
                         throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
@@ -1883,7 +2222,9 @@ namespace IsWiX.WindowsInstaller
                     }
                     try
                     {
-                        return File.ReadAllBytes(Path.Combine(folder, text));
+                        // Windows Installer looks in a subfolder named after the table first, then beside the IDT.
+                        string inTableFolder = Path.Combine(folder, column.Table, text);
+                        return File.ReadAllBytes(File.Exists(inTableFolder) ? inTableFolder : Path.Combine(folder, text));
                     }
                     catch (FileNotFoundException)
                     {
@@ -2026,6 +2367,10 @@ namespace IsWiX.WindowsInstaller
             {
                 rows.Add(new object?[] { name });
             }
+            if (this.transformView != null)
+            {
+                rows.Add(new object?[] { "_TransformView" });
+            }
             return new SqlTable("_Tables", columns, rows);
         }
 
@@ -2058,6 +2403,22 @@ namespace IsWiX.WindowsInstaller
                 }
             }
             return new SqlTable("_Columns", columns, rows);
+        }
+
+        private SqlTable BuildStoragesTable()
+        {
+            var columns = new List<SqlColumn>
+            {
+                new SqlColumn("_Storages", "Name", MsiColumnType.String, 62, false, true, false),
+                new SqlColumn("_Storages", "Data", MsiColumnType.Binary, 0, true, false, false),
+            };
+            var rows = new List<object?[]>();
+            foreach (string name in this.StorageNames())
+            {
+                // The data of a storage is read with Record.GetStream, which extracts it from the file.
+                rows.Add(new object?[] { name, new LazyBinary(0, () => null) });
+            }
+            return new SqlTable("_Storages", columns, rows);
         }
 
         private SqlTable BuildStreamsTable()

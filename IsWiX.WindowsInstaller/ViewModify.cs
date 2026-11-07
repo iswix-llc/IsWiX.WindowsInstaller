@@ -4,22 +4,36 @@ namespace IsWiX.WindowsInstaller
     using System.Collections.Generic;
     using System.Linq;
     using IsWiX.WindowsInstaller.Format;
+    using IsWiX.WindowsInstaller.Format.Internal;
 
     /// <summary>MsiViewModify on a single-table view: inserts, updates, deletes, assigns or replaces one row.</summary>
     internal static class ViewModify
     {
-        public static void Apply(Database database, BoundSelect query, int mode, object?[] values)
+        public static void Apply(Database database, BoundSelect query, int mode, object?[] values, object?[]? source = null)
         {
-            if (!query.IsSingleTableWithoutFilter)
+            // A view with a WHERE clause or ORDER BY can change the rows it fetched (Update, Delete), but new rows
+            // cannot be put through it.
+            bool changesFetchedRow = mode == (int) ViewModifyMode.Update || mode == (int) ViewModifyMode.Delete;
+            if (!query.IsSingleTable || (!query.IsSingleTableWithoutFilter && !changesFetchedRow))
             {
                 throw new MsiErrorException((uint) MsiError.FUNCTION_FAILED);
             }
             database.RequireWritable();
 
+            if (query.SingleTable.Name == "_Streams")
+            {
+                ApplyToStreams(database, query, mode, values);
+                return;
+            }
+            if (query.SingleTable.Name == "_Storages")
+            {
+                ApplyToStorages(database, query, mode, values);
+                return;
+            }
             MutableTable table = database.GetUserTable(query.SingleTable.Name)
                 ?? throw MutableTable.Failed();
             IReadOnlyList<SqlColumn> outputs = query.OutputColumns;
-            if (values.Length != outputs.Count)
+            if (values.Length < outputs.Count)
             {
                 throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
             }
@@ -33,7 +47,10 @@ namespace IsWiX.WindowsInstaller
             }
             var named = positions.ToHashSet();
 
-            int existing = table.FindByKey(table.KeyOf(supplied));
+            // Update and Delete act on the row the record was fetched from, even when the view leaves out its key.
+            bool useSource = source != null && source.Length == table.Columns.Count
+                && (mode == (int) ViewModifyMode.Update || mode == (int) ViewModifyMode.Delete);
+            int existing = table.FindByKey(table.KeyOf(useSource ? source! : supplied));
             switch (mode)
             {
                 case (int) ViewModifyMode.Insert:
@@ -95,6 +112,123 @@ namespace IsWiX.WindowsInstaller
             database.Changed();
         }
 
+        /// <summary>Modifies the plain streams of the database through a view on _Streams (Name, Data).</summary>
+        private static void ApplyToStreams(Database database, BoundSelect query, int mode, object?[] values)
+        {
+            if (values.Length < query.OutputColumns.Count || query.OutputColumns.Count < 1 || query.OutputColumns[0].Name != "Name")
+            {
+                throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
+            }
+            string name = values[0] as string ?? throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
+            bool exists = database.ReadPlainStream(name) != null;
+            byte[]? data = values.Length > 1 ? LazyBinary.Resolve(values[1]) as byte[] : null;
+            switch (mode)
+            {
+                case (int) ViewModifyMode.Insert:
+                case (int) ViewModifyMode.InsertTemporary:
+                    if (exists || data == null)
+                    {
+                        throw MutableTable.Failed();
+                    }
+                    database.PutPlainStream(name, data);
+                    break;
+
+                case (int) ViewModifyMode.Update:
+                    if (!exists || data == null)
+                    {
+                        throw MutableTable.Failed();
+                    }
+                    database.PutPlainStream(name, data);
+                    break;
+
+                case (int) ViewModifyMode.Assign:
+                case (int) ViewModifyMode.Replace:
+                    if (data == null)
+                    {
+                        throw MutableTable.Failed();
+                    }
+                    database.PutPlainStream(name, data);
+                    break;
+
+                default:
+                    throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
+            }
+        }
+
+        /// <summary>
+        /// Modifies the storages of the database through a view on _Storages (Name, Data). The data is a compound
+        /// file, such as a transform: its streams become the streams of the storage.
+        /// </summary>
+        private static void ApplyToStorages(Database database, BoundSelect query, int mode, object?[] values)
+        {
+            if (values.Length < query.OutputColumns.Count || query.OutputColumns.Count < 1 || query.OutputColumns[0].Name != "Name")
+            {
+                throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
+            }
+            string name = values[0] as string ?? throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
+            if (name.Length == 0 || name.Length > 31)
+            {
+                throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
+            }
+            bool exists = database.HasStorage(name);
+            byte[]? data = values.Length > 1 ? LazyBinary.Resolve(values[1]) as byte[] : null;
+            switch (mode)
+            {
+                case (int) ViewModifyMode.Delete:
+                    if (!exists)
+                    {
+                        throw MutableTable.Failed();
+                    }
+                    database.RemoveStorage(name);
+                    return;
+
+                case (int) ViewModifyMode.Insert:
+                case (int) ViewModifyMode.InsertTemporary:
+                    if (exists || data == null)
+                    {
+                        throw MutableTable.Failed();
+                    }
+                    break;
+
+                case (int) ViewModifyMode.Update:
+                    if (!exists || data == null)
+                    {
+                        throw MutableTable.Failed();
+                    }
+                    break;
+
+                case (int) ViewModifyMode.Assign:
+                case (int) ViewModifyMode.Replace:
+                    if (data == null)
+                    {
+                        throw MutableTable.Failed();
+                    }
+                    break;
+
+                default:
+                    throw new MsiErrorException((uint) MsiError.CALL_NOT_IMPLEMENTED);
+            }
+
+            using (var input = new System.IO.MemoryStream(data!, false))
+            {
+                CompoundFile file;
+                try
+                {
+                    file = new CompoundFile(input);
+                }
+                catch (MsiFormatException)
+                {
+                    throw new MsiErrorException((uint) MsiError.INVALID_DATA);
+                }
+                var streams = new List<KeyValuePair<string, byte[]>>();
+                foreach (CompoundFile.DirectoryEntry entry in file.Streams)
+                {
+                    streams.Add(new KeyValuePair<string, byte[]>(entry.RawName, file.ReadStream(entry)));
+                }
+                database.PutStorage(name, file.RootClsid, streams);
+            }
+        }
+
         /// <summary>The table, and the record's values placed at their table positions, for a single-table view.</summary>
         private static (MutableTable Table, object?[] Supplied, HashSet<int> Named, int[] Positions) Prepare(
             Database database, BoundSelect query, object?[] values)
@@ -105,7 +239,7 @@ namespace IsWiX.WindowsInstaller
             }
             MutableTable table = database.GetUserTable(query.SingleTable.Name)
                 ?? throw MutableTable.Failed();
-            if (values.Length != query.OutputColumns.Count)
+            if (values.Length < query.OutputColumns.Count)
             {
                 throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
             }

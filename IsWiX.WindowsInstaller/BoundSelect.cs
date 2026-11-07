@@ -33,6 +33,9 @@ namespace IsWiX.WindowsInstaller
         public bool IsSingleTableWithoutFilter =>
             this.tables.Count == 1 && this.filter == null && this.orderKeys.Length == 0 && !this.distinct;
 
+        /// <summary>True for a query over one table without DISTINCT: each row it returns is one row of the table, so rows can be modified.</summary>
+        public bool IsSingleTable => this.tables.Count == 1 && !this.distinct;
+
         /// <summary>The one table of a single-table query.</summary>
         public SqlTable SingleTable => this.tables[0];
 
@@ -171,16 +174,18 @@ namespace IsWiX.WindowsInstaller
                 output = output.Distinct(RowComparer.Instance);
             }
 
-            return new SqlResult(this.outputColumns, output.ToList());
+            return new SqlResult(this.outputColumns, output.ToList(), this.IsSingleTable ? matched : null);
         }
 
         private static IEnumerable<object?[]> CrossJoin(IReadOnlyList<SqlTable> tables)
         {
+            // msi.dll iterates the first FROM table fastest, so later tables form the outer loops.
             IEnumerable<object?[]> joined = new[] { Array.Empty<object?>() };
             foreach (SqlTable table in tables)
             {
                 SqlTable current = table;
-                joined = joined.SelectMany(prefix => current.Rows.Select(row => prefix.Concat(row).ToArray()));
+                IEnumerable<object?[]> inner = joined;
+                joined = current.Rows.SelectMany(row => inner.Select(prefix => prefix.Concat(row).ToArray()));
             }
             return joined;
         }

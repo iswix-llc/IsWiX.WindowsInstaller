@@ -61,7 +61,7 @@ internal sealed class MsiDatabase : IDisposable
     /// </summary>
     public static MsiDatabase Open(Stream stream, bool leaveOpen = false)
     {
-        ArgumentNullException.ThrowIfNull(stream);
+        if (stream is null) throw new ArgumentNullException(nameof(stream));
         if (!stream.CanSeek)
         {
             var copy = new MemoryStream();
@@ -77,6 +77,12 @@ internal sealed class MsiDatabase : IDisposable
 
     /// <summary>Names of the non-table streams, such as binary data and the summary information.</summary>
     public IReadOnlyCollection<string> StreamNames => _plainStreams.Keys;
+
+    /// <summary>The storages directly under the root, such as embedded transforms.</summary>
+    internal IReadOnlyList<CompoundFile.StorageInfo> Storages => _file.Storages;
+
+    /// <summary>Reads a stream inside a storage, by the entry <see cref="Storages"/> lists.</summary>
+    internal byte[] ReadStorageStream(CompoundFile.DirectoryEntry entry) => _file.ReadStream(entry);
 
     /// <summary>The Windows code page that the database strings are stored in.</summary>
     public int CodePage => _strings.CodePage;

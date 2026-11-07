@@ -7,6 +7,12 @@ namespace IsWiX.WindowsInstaller
 
     public partial class Database
     {
+        /// <summary>The names of the tables a transform compares: every table in the database.</summary>
+        internal System.Collections.Generic.List<string> TransformTableNames()
+        {
+            return new System.Collections.Generic.List<string>(this.AllTableNames());
+        }
+
         /// <summary>
         /// Creates a transform that, when applied to the object database, results in the reference database.
         /// </summary>

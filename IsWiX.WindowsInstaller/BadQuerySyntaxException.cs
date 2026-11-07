@@ -32,7 +32,7 @@ namespace IsWiX.WindowsInstaller
         /// </summary>
         /// <param name="msg">The message that describes the error.</param>
         public BadQuerySyntaxException(string msg)
-            : this(msg, null)
+            : this(msg, null!)
         {
         }
 
@@ -40,7 +40,7 @@ namespace IsWiX.WindowsInstaller
         /// Creates a new BadQuerySyntaxException.
         /// </summary>
         public BadQuerySyntaxException()
-            : this(null, null)
+            : this(null!, null!)
         {
         }
 

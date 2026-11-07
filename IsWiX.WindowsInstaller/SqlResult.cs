@@ -6,5 +6,5 @@ namespace IsWiX.WindowsInstaller
     using System.Linq;
     using IsWiX.WindowsInstaller.Format;
 
-    internal sealed record SqlResult(IReadOnlyList<SqlColumn> Columns, IReadOnlyList<object?[]> Rows);
+    internal sealed record SqlResult(IReadOnlyList<SqlColumn> Columns, IReadOnlyList<object?[]> Rows, IReadOnlyList<object?[]>? SourceRows = null);
 }

@@ -44,20 +44,57 @@ internal static class CompoundFileWriter
         public int Depth { get; set; }
         public int LeftIndex { get; set; } = -1;
         public int RightIndex { get; set; } = -1;
+
+        /// <summary>True for a storage. A storage has no data; its streams are the entries of its own tree.</summary>
+        public bool IsStorage { get; set; }
+        public byte[]? Clsid { get; set; }
+
+        /// <summary>For a storage, the directory index of the root of its tree, or -1 when it is empty.</summary>
+        public int ChildIndex { get; set; } = -1;
+
+        /// <summary>The deepest level of the tree this entry is in.</summary>
+        public int TreeMaxDepth { get; set; }
     }
 
-    public static void Write(Stream output, IReadOnlyList<(string Name, long Length, Func<byte[]> Read)> streams)
+    /// <summary>A storage at the root of the file, with the streams inside it.</summary>
+    public sealed record Storage(string Name, byte[]? Clsid, IReadOnlyList<(string Name, long Length, Func<byte[]> Read)> Streams);
+
+    public static void Write(Stream output, IReadOnlyList<(string Name, long Length, Func<byte[]> Read)> streams, byte[]? rootClsid = null, IReadOnlyList<Storage>? storages = null)
     {
-        var items = streams.Select(s => new Item(s.Name, s.Length, s.Read)).ToList();
-        items.Sort((a, b) => CompareNames(a.Name, b.Name));
-        for (int i = 0; i < items.Count; i++)
+        // Every directory entry except the root. The root's entries come first, then each storage's streams.
+        var items = new List<Item>();
+        var rootLevel = streams.Select(s => new Item(s.Name, s.Length, s.Read)).ToList();
+        var storageLevels = new Dictionary<Item, List<Item>>();
+        if (storages != null)
         {
-            items[i].DirectoryIndex = i + 1; // entry 0 is the root storage
-            if (i > 0 && CompareNames(items[i - 1].Name, items[i].Name) == 0)
-                throw new ArgumentException($"Duplicate stream name '{items[i].Name}'.");
+            foreach (Storage storage in storages)
+            {
+                var entry = new Item(storage.Name, 0, () => Array.Empty<byte>()) { IsStorage = true, Clsid = storage.Clsid };
+                rootLevel.Add(entry);
+                storageLevels[entry] = storage.Streams.Select(c => new Item(c.Name, c.Length, c.Read)).ToList();
+            }
         }
-        int rootChild = items.Count > 0 ? BuildTree(items, 0, items.Count - 1, 0) : -1;
-        int maxDepth = items.Count > 0 ? items.Max(i => i.Depth) : 0;
+        rootLevel.Sort((a, b) => CompareNames(a.Name, b.Name));
+        int nextIndex = 1; // entry 0 is the root storage
+        foreach (Item entry in rootLevel)
+        {
+            entry.DirectoryIndex = nextIndex++;
+            items.Add(entry);
+        }
+        CheckDuplicates(rootLevel);
+        foreach (Item entry in rootLevel.Where(e => e.IsStorage))
+        {
+            List<Item> level = storageLevels[entry];
+            level.Sort((a, b) => CompareNames(a.Name, b.Name));
+            CheckDuplicates(level);
+            foreach (Item child in level)
+            {
+                child.DirectoryIndex = nextIndex++;
+                items.Add(child);
+            }
+            entry.ChildIndex = Link(level);
+        }
+        int rootChild = Link(rootLevel);
 
         // Sector counts.
         var mini = items.Where(i => i.IsMini).ToList();
@@ -104,7 +141,7 @@ internal static class CompoundFileWriter
 
         // FAT: chain every regular run, then mark the FAT and DIFAT sectors.
         var fat = new uint[fatSectors * FatEntriesPerSector];
-        Array.Fill(fat, FreeSector);
+        Compat.Fill(fat, FreeSector);
         ChainRun(fat, 0, dirSectors);
         foreach (var item in items.Where(i => !i.IsMini && i.Length > 0))
             ChainRun(fat, (int) item.Start, item.RegularSectors);
@@ -115,7 +152,7 @@ internal static class CompoundFileWriter
 
         // Mini FAT: chain each mini stream.
         var miniFat = new uint[miniFatSectors * FatEntriesPerSector];
-        Array.Fill(miniFat, FreeSector);
+        Compat.Fill(miniFat, FreeSector);
         foreach (var item in mini)
         {
             for (int k = 0; k < item.MiniSectors; k++)
@@ -137,7 +174,7 @@ internal static class CompoundFileWriter
         var fatBuf = new byte[fatSectors * SectorSize];
         var difatBuf = new byte[difatSectors * SectorSize];
 
-        WriteDirectory(dirBuf, items, rootChild, miniSectorTotal, containerStart, maxDepth);
+        WriteDirectory(dirBuf, items, rootChild, miniSectorTotal, containerStart, rootClsid);
         Words(miniFat, miniFatBuf, 0);
         Words(fat, fatBuf, 0);
 
@@ -145,7 +182,7 @@ internal static class CompoundFileWriter
         for (int k = 0; k < difatSectors; k++)
         {
             var sector = new uint[FatEntriesPerSector];
-            Array.Fill(sector, FreeSector);
+            Compat.Fill(sector, FreeSector);
             for (int j = 0; j < DifatEntriesPerSector; j++)
             {
                 int fatIndex = HeaderDifatEntries + k * DifatEntriesPerSector + j;
@@ -189,6 +226,25 @@ internal static class CompoundFileWriter
         output.Write(fatBuf, 0, fatBuf.Length);
     }
 
+    private static void CheckDuplicates(List<Item> sorted)
+    {
+        for (int i = 1; i < sorted.Count; i++)
+        {
+            if (CompareNames(sorted[i - 1].Name, sorted[i].Name) == 0)
+                throw new ArgumentException($"Duplicate stream name '{sorted[i].Name}'.");
+        }
+    }
+
+    /// <summary>Builds the tree of one storage's entries and returns the directory index of its root, or -1.</summary>
+    private static int Link(List<Item> level)
+    {
+        if (level.Count == 0) return -1;
+        int root = BuildTree(level, 0, level.Count - 1, 0);
+        int deepest = level.Max(i => i.Depth);
+        foreach (Item item in level) item.TreeMaxDepth = deepest;
+        return root;
+    }
+
     private static int BuildTree(List<Item> items, int lo, int hi, int depth)
     {
         if (lo > hi) return -1;
@@ -200,7 +256,7 @@ internal static class CompoundFileWriter
         return node.DirectoryIndex;
     }
 
-    private static void WriteDirectory(byte[] body, List<Item> items, int rootChild, int miniSectorTotal, int containerStart, int maxDepth)
+    private static void WriteDirectory(byte[] body, List<Item> items, int rootChild, int miniSectorTotal, int containerStart, byte[]? rootClsid)
     {
         int entries = items.Count + 1;
         var dir = new byte[((entries + 3) / 4) * 4 * 128];
@@ -216,16 +272,26 @@ internal static class CompoundFileWriter
         WriteEntry(dir, 0, "Root Entry", 5, 1, NoStream, NoStream, rootChild < 0 ? NoStream : (uint) rootChild,
             miniSectorTotal > 0 ? (uint) containerStart : EndOfChain, (ulong) miniSectorTotal * MiniSectorSize);
         // Windows Installer identifies a database by this class id on the root storage.
-        byte[] installerClsid = { 0x84, 0x10, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0, 0, 0, 0, 0, 0, 0x46 };
+        byte[] installerClsid = rootClsid ?? new byte[] { 0x84, 0x10, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0, 0, 0, 0, 0, 0, 0x46 };
         Array.Copy(installerClsid, 0, dir, 80, installerClsid.Length);
 
         foreach (var item in items)
         {
             // Red nodes are the deepest level; this keeps every path to a leaf at the same black height.
-            int color = maxDepth > 0 && item.Depth == maxDepth ? 0 : 1;
-            WriteEntry(dir, item.DirectoryIndex, item.Name, 2, color,
-                item.LeftIndex < 0 ? NoStream : (uint) item.LeftIndex,
-                item.RightIndex < 0 ? NoStream : (uint) item.RightIndex,
+            int color = item.TreeMaxDepth > 0 && item.Depth == item.TreeMaxDepth ? 0 : 1;
+            uint left = item.LeftIndex < 0 ? NoStream : (uint) item.LeftIndex;
+            uint right = item.RightIndex < 0 ? NoStream : (uint) item.RightIndex;
+            if (item.IsStorage)
+            {
+                WriteEntry(dir, item.DirectoryIndex, item.Name, 1, color, left, right,
+                    item.ChildIndex < 0 ? NoStream : (uint) item.ChildIndex, 0, 0);
+                if (item.Clsid != null)
+                {
+                    Array.Copy(item.Clsid, 0, dir, item.DirectoryIndex * 128 + 80, item.Clsid.Length);
+                }
+                continue;
+            }
+            WriteEntry(dir, item.DirectoryIndex, item.Name, 2, color, left, right,
                 NoStream, item.Length == 0 ? EndOfChain : item.Start, (ulong) item.Length);
         }
 

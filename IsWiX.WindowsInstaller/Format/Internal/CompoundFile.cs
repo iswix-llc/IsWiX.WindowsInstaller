@@ -31,8 +31,17 @@ internal sealed class CompoundFile
     private readonly uint[] _miniFat;
     private readonly byte[] _miniStream;
 
-    /// <summary>All stream entries in the file, keyed by their raw (UTF-16) name.</summary>
+    /// <summary>The stream entries directly under the root, with their raw (UTF-16) names. Streams inside storages are not included.</summary>
     public IReadOnlyList<DirectoryEntry> Streams { get; }
+
+    /// <summary>The storages directly under the root, each with the streams inside it.</summary>
+    public IReadOnlyList<StorageInfo> Storages { get; }
+
+    /// <summary>The class id of the root storage, 16 bytes.</summary>
+    public byte[] RootClsid { get; }
+
+    /// <summary>A storage under the root: its raw name, class id and streams. Storages nested inside it are not listed.</summary>
+    public sealed record StorageInfo(string Name, byte[] Clsid, IReadOnlyList<DirectoryEntry> Streams);
 
     private readonly List<(byte Type, uint Left, uint Right, uint Child, DirectoryEntry Entry)> _directory = new();
 
@@ -98,22 +107,24 @@ internal sealed class CompoundFile
         // Entries outside that tree (left behind by an earlier save) are not part of the
         // file and must be ignored, or a stale copy of a stream can shadow the live one.
         var dirs = new List<(byte Type, uint Left, uint Right, uint Child, DirectoryEntry Entry)>();
+        var clsids = new List<byte[]>();
         for (int off = 0; off + DirEntrySize <= dirBytes.Length; off += DirEntrySize)
         {
             var e = dirBytes.AsSpan(off, DirEntrySize);
             byte type = e[66];
-            ushort nameLen = BinaryPrimitives.ReadUInt16LittleEndian(e[64..]);
+            ushort nameLen = BinaryPrimitives.ReadUInt16LittleEndian(e.Slice(64));
             string name = nameLen >= 2
-                ? Encoding.Unicode.GetString(e[..Math.Min(nameLen - 2, 64)])
+                ? Encoding.Unicode.GetString(e.Slice(0, Math.Min(nameLen - 2, 64)))
                 : string.Empty;
-            uint start = BinaryPrimitives.ReadUInt32LittleEndian(e[116..]);
+            uint start = BinaryPrimitives.ReadUInt32LittleEndian(e.Slice(116));
             long size = _majorVersion == 3
-                ? BinaryPrimitives.ReadUInt32LittleEndian(e[120..])
-                : (long)BinaryPrimitives.ReadUInt64LittleEndian(e[120..]);
+                ? BinaryPrimitives.ReadUInt32LittleEndian(e.Slice(120))
+                : (long)BinaryPrimitives.ReadUInt64LittleEndian(e.Slice(120));
+            clsids.Add(e.Slice(80, 16).ToArray());
             dirs.Add((type,
-                      BinaryPrimitives.ReadUInt32LittleEndian(e[68..]),
-                      BinaryPrimitives.ReadUInt32LittleEndian(e[72..]),
-                      BinaryPrimitives.ReadUInt32LittleEndian(e[76..]),
+                      BinaryPrimitives.ReadUInt32LittleEndian(e.Slice(68)),
+                      BinaryPrimitives.ReadUInt32LittleEndian(e.Slice(72)),
+                      BinaryPrimitives.ReadUInt32LittleEndian(e.Slice(76)),
                       new DirectoryEntry(name, start, size)));
         }
 
@@ -140,10 +151,30 @@ internal sealed class CompoundFile
                 pending.Push(d.Right);
                 if (d.Type == 2)
                     entries2.Add(d.Entry);
-                else if (d.Type == 1)
-                    pending.Push(d.Child);
             }
         }
+
+        var storages = new List<StorageInfo>();
+        if (dirs.Count > 0 && dirs[0].Type == 5)
+        {
+            const uint NoEntry = 0xFFFFFFFF;
+            var seen = new HashSet<uint>();
+            var walk = new Stack<uint>();
+            walk.Push(dirs[0].Child);
+            while (walk.Count > 0)
+            {
+                uint id = walk.Pop();
+                if (id == NoEntry || id >= dirs.Count || !seen.Add(id))
+                    continue;
+                var d = dirs[(int)id];
+                walk.Push(d.Left);
+                walk.Push(d.Right);
+                if (d.Type == 1)
+                    storages.Add(new StorageInfo(d.Entry.RawName, clsids[(int)id], CollectStreams(dirs, d.Child)));
+            }
+        }
+        Storages = storages;
+        RootClsid = dirs.Count > 0 ? clsids[0] : new byte[16];
 
         _miniStream = root is { } r && r.Size > 0
             ? ReadChain(r.Start, _fat, _sectorSize, r.Size)
@@ -160,6 +191,27 @@ internal sealed class CompoundFile
         _miniFat = miniFat.ToArray();
 
         Streams = entries2;
+    }
+
+    private static List<DirectoryEntry> CollectStreams(List<(byte Type, uint Left, uint Right, uint Child, DirectoryEntry Entry)> dirs, uint start)
+    {
+        const uint NoEntry = 0xFFFFFFFF;
+        var result = new List<DirectoryEntry>();
+        var seen = new HashSet<uint>();
+        var walk = new Stack<uint>();
+        walk.Push(start);
+        while (walk.Count > 0)
+        {
+            uint id = walk.Pop();
+            if (id == NoEntry || id >= dirs.Count || !seen.Add(id))
+                continue;
+            var d = dirs[(int)id];
+            walk.Push(d.Left);
+            walk.Push(d.Right);
+            if (d.Type == 2)
+                result.Add(d.Entry);
+        }
+        return result;
     }
 
     /// <summary>

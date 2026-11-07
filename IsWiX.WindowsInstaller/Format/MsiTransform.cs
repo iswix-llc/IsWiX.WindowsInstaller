@@ -66,6 +66,9 @@ internal sealed class MsiTransform : IDisposable
     /// <summary>The raw stream of each table the transform changes, keyed by table name.</summary>
     public IReadOnlyList<KeyValuePair<string, byte[]>> Tables => _tables;
 
+    /// <summary>Bytes of a string reference in the table streams: 2, or 3 for a large string pool.</summary>
+    public int StringRefWidth => _strings.BytesPerRef;
+
     /// <summary>A string from the transform's pool. Id 0 is null.</summary>
     public string? GetString(uint id) => _strings[id];
 
