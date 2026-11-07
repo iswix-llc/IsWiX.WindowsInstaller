@@ -1,8 +1,8 @@
 # IsWiX.WindowsInstaller
 
-A managed library for reading and writing Windows Installer (`.msi`) databases. It is a replacement for `wixtoolset.windowsinstaller` that does not depend on `msi.dll`. Reading and writing databases runs on any platform .NET 8 supports. Extracting binary substorages needs Windows (see [Known issues](#known-issues)).
+A managed library for reading and writing Windows Installer (`.msi`, `.msm` and `.msp`) databases. It is a replacement for `wixtoolset.windowsinstaller` that does not depend on `msi.dll`, and it runs on any platform .NET supports. The package targets `net8.0` and `netstandard2.0`; the `netstandard2.0` build lets the WiX toolset (`WixToolset.Core.Native`) reference it directly.
 
-The package is published as `IsWiX.WindowsInstaller` and is licensed under the MIT License.
+The package is published as `IsWiX.WindowsInstaller` and is licensed under the MIT License (see `LICENSE.txt`, which is included in the package).
 
 ## Solution layout
 
@@ -29,8 +29,9 @@ The package is published as `IsWiX.WindowsInstaller` and is licensed under the M
 | `ReadOnly` | Reads only. |
 | `Transact` | Keeps changes in memory until `Commit()`. |
 | `Direct` | Writes each change to the file immediately. |
-| `Create` | Creates a new, empty database. Fails if the file already exists. |
-| `CreateDirect` | Creates a new database and writes each change immediately. Fails if the file already exists. |
+| `Create` | Creates a new, empty database. Like Windows Installer, it replaces a file that is already a database, and fails with `FILE_EXISTS` if the file is anything else. |
+| `CreateDirect` | Creates a new database and writes each change immediately, with the same rules for an existing file. |
+| `PatchFile` | A flag combined with another mode to open or create a patch package (`.msp`). A file with an `.msp` extension is treated as a patch. |
 
 ## Example
 
@@ -50,19 +51,25 @@ using (View view = database.OpenView("SELECT * FROM Property"))
 }
 ```
 
+## What it can do
+
+- **Queries.** `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `CREATE TABLE`, `DROP TABLE` and `ALTER TABLE ... ADD`, plus view modification (`View.Modify`) and `Commit`.
+- **IDT import.** `Database.Import` and `ImportAll` read installer text archives. Integer columns of width 0 or 1 are stored as short integers, and strings longer than their column width are accepted, as Windows Installer does.
+- **Transforms.** `GenerateTransform`, `CreateTransformSummaryInfo`, `ApplyTransform` (including the error-suppression flags) and `ViewTransform`.
+- **Patches.** Patch databases open and are written with `DatabaseOpenMode.PatchFile`.
+- **Streams and substorages.** Binary streams, `_Streams`, `_Storages`, and `ExtractSubStorage` all work without COM, so they run on every platform.
+
 ## Not implemented yet
 
 These throw `CALL_NOT_IMPLEMENTED`:
 
 - Merging databases (`Database.Merge`).
-- Generating transforms and their summary information.
-- Some SQL forms. The parser accepts the statement types listed above, but not every form of each.
-- The constructor that takes an output path, and temporary databases opened with an empty path.
+- The constructor that takes an output path (`new Database(filePath, outputPath)`), and temporary databases opened with an empty path (that throws `ArgumentNullException`).
+- Temporary columns and tables (`TEMPORARY`, `ALTER TABLE ... HOLD` and `FREE`).
 
 ## Known issues
 
-- `IsReadOnly` always returns `true`, because the database state is not read yet.
-- `ExtractSubStorage` uses Windows COM storage APIs. Calling it on other platforms throws `PlatformNotSupportedException`.
+- String pool ids are assigned in a different order than `msi.dll` uses. Databases are valid, but a byte-for-byte comparison with an `msi.dll` database will differ.
 
 ## Building and testing
 
@@ -87,5 +94,5 @@ The script writes `generated/stress.msi` and `generated/expected_big_sha256.txt`
 
 ```
 dotnet pack IsWiX.WindowsInstaller\IsWiX.WindowsInstaller.csproj -c Release
-dotnet nuget push IsWiX.WindowsInstaller\bin\Release\IsWiX.WindowsInstaller.0.1.0.nupkg --api-key <your key> --source https://api.nuget.org/v3/index.json
+dotnet nuget push "IsWiX.WindowsInstaller\bin\Release\IsWiX.WindowsInstaller.<version>.nupkg" --api-key <your key> --source https://api.nuget.org/v3/index.json
 ```
