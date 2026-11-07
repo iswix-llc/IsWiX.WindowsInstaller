@@ -110,6 +110,8 @@ namespace IsWiX.WindowsInstaller
 
         /// <summary>
         /// Opens an existing database with another database as output.
+        /// <b>Not implemented in IsWiX.WindowsInstaller:</b> this constructor always throws
+        /// <see cref="NotImplementedException" />. Use <see cref="Database(string, DatabaseOpenMode)" /> instead.
         /// </summary>
         /// <param name="filePath">Path to the database to be read.</param>
         /// <param name="outputPath">Open mode for the database</param>
