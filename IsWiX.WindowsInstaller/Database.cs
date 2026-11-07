@@ -2175,9 +2175,10 @@ namespace IsWiX.WindowsInstaller
             switch (letter)
             {
                 case 'i':
-                    if (size == 0)
+                    if (size == 0 || size == 1)
                     {
-                        // Windows Installer accepts a width of 0 and stores a short integer, as the WiX patch tables use it.
+                        // Windows Installer accepts a width of 0 (the WiX patch tables) or 1 (extension tables such as
+                        // Wix5FirewallException.Direction, i1) and stores a short integer.
                         size = 2;
                     }
                     if (size != 2 && size != 4)

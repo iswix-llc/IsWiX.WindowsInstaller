@@ -153,6 +153,32 @@ public class WriteTests : IDisposable
     }
 
     [Fact]
+    public void ImportAcceptsIntegerColumnsOfWidthZeroOneTwoAndFour()
+    {
+        // WiX extension tables declare small numbers as i1 (for example Wix5FirewallException.Direction) and the WiX
+        // patch tables use i0; Windows Installer reads both as short integers.
+        string path = CopyOfFixture();
+        string idt = Path.Combine(folder, "Widths.idt");
+        File.WriteAllText(idt, "Id\tA\tB\tC\tD\r\ns72\ti0\ti1\ti2\tI4\r\nWidths\tId\r\nrow\t1\t2\t3\t\r\n");
+
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            db.Import(idt);
+            db.Commit();
+        }
+
+        using var reopened = new Database(path);
+        using View select = reopened.OpenView("SELECT `Id`, `A`, `B`, `C`, `D` FROM `Widths`");
+        select.Execute();
+        using Record? row = select.Fetch();
+        Assert.NotNull(row);
+        Assert.Equal(1, row!.GetInteger(2));
+        Assert.Equal(2, row.GetInteger(3));
+        Assert.Equal(3, row.GetInteger(4));
+        Assert.True(row.IsNull(5));
+    }
+
+    [Fact]
     public void CodePageSetterIsWrittenOnCommit()
     {
         string path = CopyOfFixture();
