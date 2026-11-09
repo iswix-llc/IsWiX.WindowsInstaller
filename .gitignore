@@ -419,6 +419,9 @@ FodyWeavers.xsd
 
 # Windows Installer files from build outputs
 *.cab
+# The IsWiX.Compression.Cab project folder and its test fixtures match *.cab (Git ignores case on Windows).
+!IsWiX.Compression.Cab/
+!IsWiX.Compression.Cab.Tests/fixtures/*.cab
 *.msi
 *.msix
 *.msm
