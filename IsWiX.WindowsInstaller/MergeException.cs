@@ -104,7 +104,7 @@ namespace IsWiX.WindowsInstaller
         {
             get
             {
-                return new List<int>(this.conflictCounts);
+                return new List<int>(this.conflictCounts ?? new List<int>());
             }
         }
 
@@ -115,7 +115,7 @@ namespace IsWiX.WindowsInstaller
         {
             get
             {
-                return new List<string>(this.conflictTables);
+                return new List<string>(this.conflictTables ?? new List<string>());
             }
         }
 

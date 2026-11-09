@@ -116,6 +116,15 @@ namespace IsWiX.WindowsInstaller
             return Guard(() => database.MergeFrom(databaseMerge, szTableName));
         }
 
+        internal static void MsiDatabaseInsertRow(Database database, string table, IDictionary<string, object?> values)
+        {
+            Guard(() =>
+            {
+                database.ThrowIfClosed();
+                database.InsertRowCore(table, values);
+            });
+        }
+
         internal static void MsiDatabaseCommit(Database database)
         {
             Guard(() =>

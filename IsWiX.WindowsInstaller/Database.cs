@@ -388,6 +388,34 @@ namespace IsWiX.WindowsInstaller
         /// Win32 MSI API:
         /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msidatabasemerge.asp">MsiDatabaseMerge</a>
         /// </p></remarks>
+        /// <summary>
+        /// Inserts one row into a table without holding its strings to the declared column widths, the way Windows
+        /// Installer treats the identifiers that merge module processing generates (a modularized identifier can be
+        /// longer than the column). Columns that are not named are null.
+        /// </summary>
+        /// <param name="tableName">The table to insert into.</param>
+        /// <param name="values">The column values by column name; strings and 32-bit integers.</param>
+        public void InsertRowUnchecked(string tableName, IDictionary<string, object> values)
+        {
+            if (tableName == null)
+            {
+                throw new ArgumentNullException("tableName");
+            }
+
+            if (values == null)
+            {
+                throw new ArgumentNullException("values");
+            }
+
+            var converted = new Dictionary<string, object?>(StringComparer.Ordinal);
+            foreach (KeyValuePair<string, object> value in values)
+            {
+                converted[value.Key] = value.Value;
+            }
+
+            MsiApi.MsiDatabaseInsertRow(this, tableName, converted);
+        }
+
         [SuppressMessage("Microsoft.Design", "CA1011:ConsiderPassingBaseTypesAsParameters")]
         public void Merge(Database otherDatabase, string errorTable)
         {
@@ -1121,6 +1149,26 @@ namespace IsWiX.WindowsInstaller
         {
             this.RequireWritable();
             this.pendingStreams[name] = data;
+            this.Changed();
+        }
+
+        internal void InsertRowCore(string tableName, IDictionary<string, object?> values)
+        {
+            this.RequireWritable();
+            MutableTable table = this.GetUserTable(tableName) ?? throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
+            var row = new object?[table.Columns.Count];
+            foreach (KeyValuePair<string, object?> value in values)
+            {
+                int index = table.ColumnIndex(value.Key);
+                if (index < 0)
+                {
+                    throw new MsiErrorException((uint) MsiError.INVALID_PARAMETER);
+                }
+
+                row[index] = value.Value;
+            }
+
+            table.Insert(row, checkStringWidth: false);
             this.Changed();
         }
 

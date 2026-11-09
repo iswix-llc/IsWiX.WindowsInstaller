@@ -180,4 +180,43 @@ public class MergeTests : IDisposable
         row!.GetStream(1).CopyTo(copied);
         Assert.Equal(payload, copied.ToArray());
     }
+
+    [Fact]
+    public void InsertRowUnchecked_AcceptsAStringLongerThanTheColumn()
+    {
+        string path = MakeDatabase("long.msi", "CREATE TABLE `T` (`K` CHAR(8) NOT NULL, `A` CHAR(4) PRIMARY KEY `K`)");
+        using var db = new Database(path, DatabaseOpenMode.Transact);
+
+        db.InsertRowUnchecked("T", new Dictionary<string, object> { { "K", "a-key-longer-than-eight" }, { "A", "x" } });
+
+        Assert.Equal(new[] { "a-key-longer-than-eight|x" }, Rows(db, "SELECT `K`, `A` FROM `T`"));
+        Assert.Throws<InstallerException>(() => db.InsertRowUnchecked("T", new Dictionary<string, object> { { "K", "a-key-longer-than-eight" } }));
+    }
+
+    [Fact]
+    public void Update_OnlyHoldsTheChangedColumnsToTheirWidth()
+    {
+        string path = MakeDatabase("update.msi", "CREATE TABLE `T` (`K` CHAR(8) NOT NULL, `A` CHAR(4), `B` CHAR(4) PRIMARY KEY `K`)");
+        using var db = new Database(path, DatabaseOpenMode.Transact);
+        db.InsertRowUnchecked("T", new Dictionary<string, object> { { "K", "k" }, { "A", "longer than four" } });
+
+        db.Execute("UPDATE `T` SET `B` = 'ok' WHERE `K` = 'k'");
+
+        Assert.Equal(new[] { "k|longer than four|ok" }, Rows(db, "SELECT `K`, `A`, `B` FROM `T`"));
+        Assert.Throws<InstallerException>(() => db.Execute("UPDATE `T` SET `B` = 'too long for b' WHERE `K` = 'k'"));
+    }
+
+    [Fact]
+    public void Merge_SchemaDifferenceHasAnEmptyConflictList()
+    {
+        string target = MakeDatabase("schema-target.msi", "CREATE TABLE `T` (`K` CHAR(8) NOT NULL, `V` INT PRIMARY KEY `K`)");
+        string source = MakeDatabase("schema-source.msi", "CREATE TABLE `T` (`K` CHAR(8) NOT NULL, `V` CHAR(8) PRIMARY KEY `K`)");
+        using var db = new Database(target, DatabaseOpenMode.Transact);
+        using var other = new Database(source, DatabaseOpenMode.ReadOnly);
+
+        MergeException e = Assert.Throws<MergeException>(() => db.Merge(other, "Conflicts"));
+
+        Assert.Empty(e.ConflictTables);
+        Assert.Empty(e.ConflictCounts);
+    }
 }

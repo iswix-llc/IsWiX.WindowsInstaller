@@ -89,9 +89,22 @@ namespace IsWiX.WindowsInstaller
         /// <summary>Replaces rows at the given indexes. All rows are checked before any of them is stored.</summary>
         public void Update(IReadOnlyList<(int Index, object?[] Row)> changes)
         {
-            foreach ((_, object?[] row) in changes)
+            foreach ((int index, object?[] row) in changes)
             {
-                this.Validate(row);
+                // A string that was already stored may be longer than its column's declared width (merge modules do
+                // this), so only the columns this change alters have their width checked.
+                this.Validate(row, null, checkStringWidth: false);
+                object?[] before = this.Rows[index];
+                var altered = new HashSet<int>();
+                for (int c = 0; c < row.Length; c++)
+                {
+                    if (!Equals(before[c], row[c]))
+                    {
+                        altered.Add(c);
+                    }
+                }
+
+                this.Validate(row, altered);
             }
 
             var changed = new HashSet<int>(changes.Select(c => c.Index));
