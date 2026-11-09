@@ -25,7 +25,12 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Build
-        run: dotnet build IsWiX.WindowsInstaller/IsWiX.WindowsInstaller.csproj -c Release
+        run: |
+          dotnet build IsWiX.WindowsInstaller/IsWiX.WindowsInstaller.csproj -c Release
+          dotnet build IsWiX.Compression/IsWiX.Compression.csproj -c Release
+          dotnet build IsWiX.Compression.Cab/IsWiX.Compression.Cab.csproj -c Release
 
       - name: Test
-        run: dotnet test IsWiX.WindowsInstaller.Tests/IsWiX.WindowsInstaller.Tests.csproj -c Release
+        run: |
+          dotnet test IsWiX.WindowsInstaller.Tests/IsWiX.WindowsInstaller.Tests.csproj -c Release
+          dotnet test IsWiX.Compression.Cab.Tests/IsWiX.Compression.Cab.Tests.csproj -c Release

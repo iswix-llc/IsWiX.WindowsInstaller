@@ -3,13 +3,22 @@ name: Publish NuGet package
 on:
   workflow_dispatch:
     inputs:
+      package:
+        description: Which package to publish. Publish IsWiX.Compression before IsWiX.Compression.Cab.
+        type: choice
+        options:
+          - IsWiX.WindowsInstaller
+          - IsWiX.Compression
+          - IsWiX.Compression.Cab
+        default: IsWiX.WindowsInstaller
       bump:
-        description: Which part of the version to increment
+        description: Which part of the version to increment ("none" publishes the version already in the project file)
         type: choice
         options:
           - patch
           - minor
           - major
+          - none
         default: patch
 
 permissions:
@@ -38,11 +47,25 @@ jobs:
       - name: Install sign CLI tool
         run: dotnet tool install --tool-path . --prerelease sign
 
+      - name: Resolve the package
+        id: pkg
+        shell: pwsh
+        run: |
+          $name = '${{ inputs.package }}'
+          $tests = if ($name -eq 'IsWiX.WindowsInstaller') { 'IsWiX.WindowsInstaller.Tests/IsWiX.WindowsInstaller.Tests.csproj' } else { 'IsWiX.Compression.Cab.Tests/IsWiX.Compression.Cab.Tests.csproj' }
+          # The original package keeps its plain v1.2.3 tags; the others are prefixed with the package name.
+          $tagPrefix = if ($name -eq 'IsWiX.WindowsInstaller') { 'v' } else { "$name-v" }
+          "name=$name" >> $env:GITHUB_OUTPUT
+          "project=$name/$name.csproj" >> $env:GITHUB_OUTPUT
+          "folder=$name" >> $env:GITHUB_OUTPUT
+          "tests=$tests" >> $env:GITHUB_OUTPUT
+          "tagprefix=$tagPrefix" >> $env:GITHUB_OUTPUT
+
       - name: Increment the version
         id: version
         shell: pwsh
         run: |
-          $csproj = 'IsWiX.WindowsInstaller/IsWiX.WindowsInstaller.csproj'
+          $csproj = '${{ steps.pkg.outputs.project }}'
           $text = [IO.File]::ReadAllText($csproj)
           if ($text -notmatch '<Version>(\d+)\.(\d+)\.(\d+)</Version>') { throw 'No <Version> element found.' }
           $major = [int]$Matches[1]; $minor = [int]$Matches[2]; $patch = [int]$Matches[3]
@@ -50,6 +73,7 @@ jobs:
             'major' { $major++; $minor = 0; $patch = 0 }
             'minor' { $minor++; $patch = 0 }
             'patch' { $patch++ }
+            'none' { }
           }
           $new = "$major.$minor.$patch"
           $text = $text -replace '<Version>\d+\.\d+\.\d+</Version>', "<Version>$new</Version>"
@@ -60,8 +84,8 @@ jobs:
       - name: Build and test
         shell: pwsh
         run: |
-          dotnet build IsWiX.WindowsInstaller/IsWiX.WindowsInstaller.csproj -c Release
-          dotnet test IsWiX.WindowsInstaller.Tests/IsWiX.WindowsInstaller.Tests.csproj -c Release
+          dotnet build ${{ steps.pkg.outputs.project }} -c Release
+          dotnet test ${{ steps.pkg.outputs.tests }} -c Release
 
       - name: Sign in to Azure (federated identity)
         uses: azure/login@v3
@@ -76,7 +100,7 @@ jobs:
           endpoint: https://eus.codesigning.azure.net/
           signing-account-name: ISWIX-LLC
           certificate-profile-name: IsWiX
-          files-folder: ${{ github.workspace }}/IsWiX.WindowsInstaller/bin/Release/net8.0
+          files-folder: ${{ github.workspace }}/${{ steps.pkg.outputs.folder }}/bin/Release/net8.0
           files-folder-filter: dll
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
@@ -84,7 +108,7 @@ jobs:
 
       - name: Pack
         shell: pwsh
-        run: dotnet pack IsWiX.WindowsInstaller/IsWiX.WindowsInstaller.csproj -c Release -o nupkg --no-build
+        run: dotnet pack ${{ steps.pkg.outputs.project }} -c Release -o nupkg --no-build
 
 #      - name: Sign NuGet package
 #        shell: pwsh
@@ -106,20 +130,25 @@ jobs:
 
       - name: Publish to nuget.org
         shell: pwsh
-        run: dotnet nuget push "nupkg/IsWiX.WindowsInstaller.${{ steps.version.outputs.version }}.nupkg" --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
+        run: dotnet nuget push "nupkg/${{ steps.pkg.outputs.name }}.${{ steps.version.outputs.version }}.nupkg" --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
 
       - name: Commit and tag the release
         shell: pwsh
         run: |
           $v = '${{ steps.version.outputs.version }}'
+          $tag = '${{ steps.pkg.outputs.tagprefix }}' + $v
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-          git add IsWiX.WindowsInstaller/IsWiX.WindowsInstaller.csproj
-          git commit -m "Release $v"
-          if ($LASTEXITCODE -ne 0) { throw 'Committing the version bump failed.' }
-          git tag -a "v$v" -m "Release $v"
-          if ($LASTEXITCODE -ne 0) { throw "Tagging v$v failed." }
+          git add ${{ steps.pkg.outputs.project }}
+          # With bump "none" the project file is unchanged, so there is nothing to commit; the tag still goes on main.
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "Release ${{ steps.pkg.outputs.name }} $v"
+            if ($LASTEXITCODE -ne 0) { throw 'Committing the version bump failed.' }
+          }
+          git tag -a "$tag" -m "Release ${{ steps.pkg.outputs.name }} $v"
+          if ($LASTEXITCODE -ne 0) { throw "Tagging $tag failed." }
           # Push the branch and the tag by name, together: --follow-tags alone skips lightweight tags,
           # and --atomic keeps main and the tag from diverging if either is rejected.
-          git push --atomic origin main "refs/tags/v$v"
-          if ($LASTEXITCODE -ne 0) { throw "Pushing main and v$v failed." }
+          git push --atomic origin main "refs/tags/$tag"
+          if ($LASTEXITCODE -ne 0) { throw "Pushing main and $tag failed." }

@@ -10,6 +10,9 @@ The package is published as `IsWiX.WindowsInstaller` and is licensed under the M
 | --- | --- |
 | `IsWiX.WindowsInstaller` | The library. This is what ships in the NuGet package. |
 | `IsWiX.WindowsInstaller.Tests` | xUnit tests for the library, with fixture databases. |
+| `IsWiX.Compression` | Abstract archive types (`ArchiveInfo`, `ArchiveFileInfo`, `CompressionEngine`, stream contexts), mirroring `WixToolset.Dtf.Compression`. Packaged as `IsWiX.Compression`. |
+| `IsWiX.Compression.Cab` | Reads cabinet files without `cabinet.dll` (`CabInfo`, `CabFileInfo`, `CabEngine`), mirroring `WixToolset.Dtf.Compression.Cab`. Stored, MSZIP and LZX; no packing and no multi-file cabinets yet. Packaged as `IsWiX.Compression.Cab`. |
+| `IsWiX.Compression.Cab.Tests` | xUnit tests for the cabinet reader, with fixture cabinets. |
 | `TestApp` | A scratch console app. It is not part of the package. |
 
 ## How the library is organised
