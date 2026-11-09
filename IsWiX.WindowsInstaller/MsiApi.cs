@@ -113,8 +113,7 @@ namespace IsWiX.WindowsInstaller
         {
             database.ThrowIfClosed();
             databaseMerge.ThrowIfClosed();
-            // Merging is not implemented yet.
-            throw InstallerException.ExceptionFromReturnCode((uint) MsiError.CALL_NOT_IMPLEMENTED);
+            return Guard(() => database.MergeFrom(databaseMerge, szTableName));
         }
 
         internal static void MsiDatabaseCommit(Database database)

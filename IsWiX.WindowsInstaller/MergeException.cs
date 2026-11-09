@@ -56,15 +56,23 @@ namespace IsWiX.WindowsInstaller
                 IList<string> conflictTableList = new List<string>();
                 IList<int> conflictCountList = new List<int>();
 
-                using (View view = db.OpenView("SELECT `Table`, `NumRowMergeConflicts` FROM `" + conflictsTableName + "`"))
+                try
                 {
-                    view.Execute();
-
-                    foreach (Record rec in view) using (rec)
+                    using (View view = db.OpenView("SELECT `Table`, `NumRowMergeConflicts` FROM `" + conflictsTableName + "`"))
                     {
-                        conflictTableList.Add(rec.GetString(1));
-                        conflictCountList.Add((int) rec.GetInteger(2));
+                        view.Execute();
+
+                        foreach (Record rec in view) using (rec)
+                        {
+                            conflictTableList.Add(rec.GetString(1));
+                            conflictCountList.Add((int) rec.GetInteger(2));
+                        }
                     }
+
+                }
+                catch (InstallerException)
+                {
+                    // The named table already existed without the conflict columns, so it has no conflicts to list.
                 }
 
                 this.conflictTables = conflictTableList;

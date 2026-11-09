@@ -60,13 +60,13 @@ using (View view = database.OpenView("SELECT * FROM Property"))
 - **IDT import.** `Database.Import` and `ImportAll` read installer text archives. Integer columns of width 0 or 1 are stored as short integers, and strings longer than their column width are accepted, as Windows Installer does.
 - **Transforms.** `GenerateTransform`, `CreateTransformSummaryInfo`, `ApplyTransform` (including the error-suppression flags) and `ViewTransform`.
 - **Patches.** Patch databases open and are written with `DatabaseOpenMode.PatchFile`.
+- **Merging.** `Database.Merge` adds the tables and rows of another database. A row with the same key and different data is a conflict, reported in the error table when one is named. It does not copy embedded cabinets or transforms.
 - **Streams and substorages.** Binary streams, `_Streams`, `_Storages`, and `ExtractSubStorage` all work without COM, so they run on every platform.
 
 ## Not implemented yet
 
 These throw `CALL_NOT_IMPLEMENTED`:
 
-- Merging databases (`Database.Merge`).
 - The constructor that takes an output path (`new Database(filePath, outputPath)`), and temporary databases opened with an empty path (that throws `ArgumentNullException`).
 - Temporary columns and tables (`TEMPORARY`, `ALTER TABLE ... HOLD` and `FREE`).
 
