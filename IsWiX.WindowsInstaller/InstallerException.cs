@@ -222,7 +222,33 @@ namespace IsWiX.WindowsInstaller
 
         internal static string GetSystemMessage(uint errorCode)
         {
-            return MsiApi.FormatMessage(errorCode)?.Trim();
+            string text = MsiApi.FormatMessage(errorCode)?.Trim();
+            return String.IsNullOrEmpty(text) ? Describe(errorCode) : text;
+        }
+
+        /// <summary>
+        /// Text for an error code when the system has none, so that an exception never reads only
+        /// "Exception of type ... was thrown".
+        /// </summary>
+        private static string Describe(uint errorCode)
+        {
+            string name = Enum.IsDefined(typeof(MsiError), errorCode) ? " (" + ((MsiError) errorCode).ToString() + ")" : String.Empty;
+            string meaning;
+            switch (errorCode)
+            {
+                case (uint) MsiError.BAD_QUERY_SYNTAX: meaning = "The SQL query is not valid."; break;
+                case (uint) MsiError.FUNCTION_FAILED: meaning = "The operation failed; for an insert this is usually a duplicate primary key."; break;
+                case (uint) MsiError.INVALID_TABLE: meaning = "The table does not exist in the database."; break;
+                case (uint) MsiError.DATATYPE_MISMATCH: meaning = "A value does not fit its column: wrong type, null in a required column, or longer than the column allows."; break;
+                case (uint) MsiError.INVALID_PARAMETER: meaning = "A parameter is not valid."; break;
+                case (uint) MsiError.INVALID_HANDLE_STATE: meaning = "The object is not in a state that allows this operation."; break;
+                case (uint) MsiError.FILE_NOT_FOUND: meaning = "The file was not found."; break;
+                case (uint) MsiError.PATH_NOT_FOUND: meaning = "The path was not found."; break;
+                case (uint) MsiError.FILE_INVALID: meaning = "The file is not a valid Windows Installer file."; break;
+                default: meaning = String.Empty; break;
+            }
+
+            return ("Windows Installer error " + errorCode.ToString(CultureInfo.InvariantCulture) + name + ". " + meaning).Trim();
         }
 
         internal void SaveErrorRecord()

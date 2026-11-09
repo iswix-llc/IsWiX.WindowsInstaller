@@ -98,7 +98,7 @@ namespace IsWiX.WindowsInstaller
                     {
                         row[this.insertColumns[k]] = Evaluate(insert.Values[k], parameters);
                     }
-                    this.table.Insert(row);
+                    this.table.Insert(row, this.database.EnforceStringWidth);
                     break;
                 }
                 case SqlUpdate:
@@ -119,7 +119,7 @@ namespace IsWiX.WindowsInstaller
                         }
                         changes.Add((i, updated));
                     }
-                    this.table.Update(changes);
+                    this.table.Update(changes, this.database.EnforceStringWidth);
                     break;
                 }
                 case SqlDelete:

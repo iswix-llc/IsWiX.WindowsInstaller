@@ -54,12 +54,12 @@ namespace IsWiX.WindowsInstaller
             switch (mode)
             {
                 case (int) ViewModifyMode.Insert:
-                    table.Insert(supplied);
+                    table.Insert(supplied, database.EnforceStringWidth);
                     break;
 
                 case (int) ViewModifyMode.Update:
                     RequireExisting(existing);
-                    table.Update(new[] { (existing, Merge(table.Rows[existing], supplied, named)) });
+                    table.Update(new[] { (existing, Merge(table.Rows[existing], supplied, named)) }, database.EnforceStringWidth);
                     break;
 
                 case (int) ViewModifyMode.Delete:
@@ -70,11 +70,11 @@ namespace IsWiX.WindowsInstaller
                 case (int) ViewModifyMode.Assign:
                     if (existing >= 0)
                     {
-                        table.Update(new[] { (existing, Merge(table.Rows[existing], supplied, named)) });
+                        table.Update(new[] { (existing, Merge(table.Rows[existing], supplied, named)) }, database.EnforceStringWidth);
                     }
                     else
                     {
-                        table.Insert(supplied);
+                        table.Insert(supplied, database.EnforceStringWidth);
                     }
                     break;
 
@@ -83,14 +83,14 @@ namespace IsWiX.WindowsInstaller
                     {
                         table.RemoveAt(existing);
                     }
-                    table.Insert(supplied);
+                    table.Insert(supplied, database.EnforceStringWidth);
                     break;
 
                 case (int) ViewModifyMode.Merge:
                     // A new row is inserted. A row with the same key must already hold the record's values.
                     if (existing < 0)
                     {
-                        table.Insert(supplied);
+                        table.Insert(supplied, database.EnforceStringWidth);
                     }
                     else
                     {
@@ -271,7 +271,7 @@ namespace IsWiX.WindowsInstaller
         public static void Check(Database database, BoundSelect query, int mode, object?[] values)
         {
             (MutableTable table, object?[] supplied, HashSet<int> named, _) = Prepare(database, query, values);
-            table.Validate(supplied, named);
+            table.Validate(supplied, named, database.EnforceStringWidth);
             int existing = table.FindByKey(table.KeyOf(supplied));
             switch (mode)
             {

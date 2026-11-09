@@ -49,7 +49,10 @@ namespace IsWiX.WindowsInstaller
         /// <exception cref="InvalidHandleException">the Database handle is invalid</exception>
         /// <remarks><p>
         /// The <paramref name="sqlFormat"/> parameter is formatted using
-        /// <see cref="String.Format(string,object[])"/>.
+        /// <see cref="String.Format(string,object[])"/>, but only when arguments are given: a statement
+        /// passed without arguments is run as written. When arguments are given, literal braces in the
+        /// statement (a GUID, say) must be doubled, and values are better passed as parameters
+        /// with <see cref="Execute(string, Record)"/>, which also avoids quoting problems.
         /// </p><p>
         /// Win32 MSI APIs:
         /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msidatabaseopenview.asp">MsiDatabaseOpenView</a>,

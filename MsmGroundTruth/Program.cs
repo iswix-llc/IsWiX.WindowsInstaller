@@ -9,9 +9,9 @@ using WixToolset.Core.Native.Msm;
 // errors, the module's dependencies and configurable items, and every table of the result. Windows only.
 //   dotnet run --project MsmGroundTruth -- <report file> <.msm file or folder of .msm files>...
 
-internal static class Program
+internal static partial class Program
 {
-    private static void CreateBase(string path, int pageCount, bool sequences)
+    private static void CreateBase(string path, int pageCount, bool sequences, Action<Database>? extra = null)
     {
         using (var db = new Database(path, DatabaseOpenMode.Create))
         {
@@ -54,6 +54,7 @@ internal static class Program
                 }
             }
 
+            extra?.Invoke(db);
             db.Commit();
         }
 
@@ -84,7 +85,7 @@ internal static class Program
         return string.Join(";", items);
     }
 
-    private static string Merge(string module, string baseDatabase, string work, string? redirect, int language, bool connect, bool managed = false)
+    private static string Merge(string module, string baseDatabase, string work, string? redirect, int language, bool connect, bool managed = false, string feature = "F", IMsmConfigureModule? config = null, int repeat = 1)
     {
         string target = Path.Combine(work, Guid.NewGuid().ToString("N") + ".msi");
         File.Copy(baseDatabase, target);
@@ -97,10 +98,25 @@ internal static class Program
         {
             merge.OpenLog(log);
             merge.OpenDatabase(target);
-            merge.OpenModule(module, (short) language);
             try
             {
-                merge.MergeEx("F", redirect ?? string.Empty, null!);
+                merge.OpenModule(module, (short) language);
+            }
+            catch (Exception e)
+            {
+                commit = false;
+                text.AppendLine("merge: OpenModule " + e.GetType().Name + " 0x" + e.HResult.ToString("X8"));
+                merge.CloseDatabase(false);
+                return text.ToString();
+            }
+
+            try
+            {
+                for (int i = 0; i < repeat; i++)
+                {
+                    merge.MergeEx(feature, redirect ?? string.Empty, config!);
+                }
+
                 if (connect)
                 {
                     merge.Connect("G");
@@ -440,6 +456,11 @@ internal static class Program
         if (PreloadMergeMod() == null)
         {
             return 3;
+        }
+
+        if (args.Length >= 2 && args[0] == "--edge")
+        {
+            return Edge(args[1], args.Length > 2 ? args[2] : null);
         }
 
         bool compareMode = args.Length > 0 && args[0] == "--compare";

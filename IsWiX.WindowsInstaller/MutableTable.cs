@@ -87,7 +87,7 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>Replaces rows at the given indexes. All rows are checked before any of them is stored.</summary>
-        public void Update(IReadOnlyList<(int Index, object?[] Row)> changes)
+        public void Update(IReadOnlyList<(int Index, object?[] Row)> changes, bool checkStringWidth = true)
         {
             foreach ((int index, object?[] row) in changes)
             {
@@ -104,7 +104,7 @@ namespace IsWiX.WindowsInstaller
                     }
                 }
 
-                this.Validate(row, altered);
+                this.Validate(row, altered, checkStringWidth);
             }
 
             var changed = new HashSet<int>(changes.Select(c => c.Index));

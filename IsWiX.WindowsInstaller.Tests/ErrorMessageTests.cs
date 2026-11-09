@@ -38,4 +38,14 @@ public class ErrorMessageTests
         Assert.Equal(plain.GetType(), exception.GetType());
         Assert.Equal(plain.Message, exception.Message);
     }
+
+    [Fact]
+    public void MessageNamesTheErrorWhenThereIsNothingElseToSay()
+    {
+        Exception exception = InstallerException.ExceptionFromReturnCode(new MsiErrorException((uint) MsiError.DATATYPE_MISMATCH));
+
+        Assert.Contains("1629", exception.Message);
+        Assert.Contains("DATATYPE_MISMATCH", exception.Message);
+        Assert.Contains("does not fit", exception.Message);
+    }
 }

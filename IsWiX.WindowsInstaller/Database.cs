@@ -228,6 +228,15 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>
+        /// Gets or sets whether SQL INSERT and UPDATE statements and view modifications hold text values to the
+        /// width declared for their column, which is how Windows Installer treats them. The default is true.
+        /// Set it to false to write text longer than its column, as merge module processing does for the long
+        /// identifiers it generates; type and nullability are still checked. Importing an IDT, merging and
+        /// <see cref="InsertRowUnchecked"/> never check the width.
+        /// </summary>
+        public bool EnforceStringWidth { get; set; } = true;
+
+        /// <summary>
         /// Gets the collection of tables in the Database.
         /// </summary>
         public TableCollection Tables
@@ -350,6 +359,138 @@ namespace IsWiX.WindowsInstaller
         }
 
         /// <summary>
+        /// Inserts one row into a table, checking the values against the table's columns as an SQL INSERT does:
+        /// type, nullability and the declared width of text columns (see <see cref="EnforceStringWidth"/>). Null
+        /// values leave the column null.
+        /// </summary>
+        /// <param name="tableName">The table to insert into.</param>
+        /// <param name="values">The column values by column name; strings and 32-bit integers.</param>
+        /// <exception cref="InstallerException">a value does not fit its column, or the primary key exists</exception>
+        public void InsertRow(string tableName, IDictionary<string, object> values)
+        {
+            if (String.IsNullOrEmpty(tableName))
+            {
+                throw new ArgumentNullException("tableName");
+            }
+
+            if (values == null)
+            {
+                throw new ArgumentNullException("values");
+            }
+
+            var columns = new List<string>();
+            var fields = new List<object>();
+            foreach (KeyValuePair<string, object> value in values)
+            {
+                if (value.Value != null)
+                {
+                    columns.Add("`" + value.Key + "`");
+                    fields.Add(value.Value);
+                }
+            }
+
+            if (columns.Count == 0)
+            {
+                throw new ArgumentException("At least one column needs a value.", "values");
+            }
+
+            string markers = String.Join(", ", columns.ConvertAll(c => "?"));
+            this.Execute(
+                "INSERT INTO `" + tableName + "` (" + String.Join(", ", columns) + ") VALUES (" + markers + ")",
+                new Record(fields.ToArray()));
+        }
+
+        /// <summary>
+        /// Inserts one row into a table, checking the values as <see cref="InsertRow(string, IDictionary{string, object})"/> does.
+        /// </summary>
+        /// <param name="tableName">The table to insert into.</param>
+        /// <param name="values">Pairs of column name and value; null values leave the column null.</param>
+        public void InsertRow(string tableName, params (string Column, object Value)[] values)
+        {
+            if (values == null)
+            {
+                throw new ArgumentNullException("values");
+            }
+
+            var dictionary = new Dictionary<string, object>(StringComparer.Ordinal);
+            foreach ((string column, object value) in values)
+            {
+                dictionary[column] = value;
+            }
+
+            this.InsertRow(tableName, dictionary);
+        }
+
+        /// <summary>Gets whether the database has a table of the given name.</summary>
+        /// <param name="tableName">The case-sensitive table name.</param>
+        public bool TableExists(string tableName)
+        {
+            if (String.IsNullOrEmpty(tableName))
+            {
+                throw new ArgumentNullException("tableName");
+            }
+
+            return this.Tables.Contains(tableName);
+        }
+
+        /// <summary>
+        /// Runs a CREATE TABLE statement unless the database already has a table of that name.
+        /// The statement is run as written; braces in it are not treated as format items.
+        /// </summary>
+        /// <param name="createTableSql">A CREATE TABLE statement with the table name in backticks.</param>
+        /// <returns>true when the table was created, false when it already existed.</returns>
+        public bool CreateTableIfMissing(string createTableSql)
+        {
+            if (String.IsNullOrEmpty(createTableSql))
+            {
+                throw new ArgumentNullException("createTableSql");
+            }
+
+            int open = createTableSql.IndexOf('`');
+            int close = open < 0 ? -1 : createTableSql.IndexOf('`', open + 1);
+            if (!createTableSql.TrimStart().StartsWith("CREATE TABLE", StringComparison.OrdinalIgnoreCase) || close < 0)
+            {
+                throw new ArgumentException("A CREATE TABLE statement with the table name in backticks is required.", "createTableSql");
+            }
+
+            if (this.TableExists(createTableSql.Substring(open + 1, close - open - 1)))
+            {
+                return false;
+            }
+
+            this.Execute(createTableSql, (Record) null);
+            return true;
+        }
+
+        /// <summary>
+        /// Inserts one row into a table without holding its strings to the declared column widths, the way Windows
+        /// Installer treats the identifiers that merge module processing generates (a modularized identifier can be
+        /// longer than the column). Columns that are not named are null.
+        /// </summary>
+        /// <param name="tableName">The table to insert into.</param>
+        /// <param name="values">The column values by column name; strings and 32-bit integers.</param>
+        public void InsertRowUnchecked(string tableName, IDictionary<string, object> values)
+        {
+            if (tableName == null)
+            {
+                throw new ArgumentNullException("tableName");
+            }
+
+            if (values == null)
+            {
+                throw new ArgumentNullException("values");
+            }
+
+            var converted = new Dictionary<string, object?>(StringComparer.Ordinal);
+            foreach (KeyValuePair<string, object> value in values)
+            {
+                converted[value.Key] = value.Value;
+            }
+
+            MsiApi.MsiDatabaseInsertRow(this, tableName, converted);
+        }
+
+        /// <summary>
         /// Merges another database with this database.
         /// </summary>
         /// <param name="otherDatabase">The database to be merged into this database</param>
@@ -388,34 +529,6 @@ namespace IsWiX.WindowsInstaller
         /// Win32 MSI API:
         /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msidatabasemerge.asp">MsiDatabaseMerge</a>
         /// </p></remarks>
-        /// <summary>
-        /// Inserts one row into a table without holding its strings to the declared column widths, the way Windows
-        /// Installer treats the identifiers that merge module processing generates (a modularized identifier can be
-        /// longer than the column). Columns that are not named are null.
-        /// </summary>
-        /// <param name="tableName">The table to insert into.</param>
-        /// <param name="values">The column values by column name; strings and 32-bit integers.</param>
-        public void InsertRowUnchecked(string tableName, IDictionary<string, object> values)
-        {
-            if (tableName == null)
-            {
-                throw new ArgumentNullException("tableName");
-            }
-
-            if (values == null)
-            {
-                throw new ArgumentNullException("values");
-            }
-
-            var converted = new Dictionary<string, object?>(StringComparer.Ordinal);
-            foreach (KeyValuePair<string, object> value in values)
-            {
-                converted[value.Key] = value.Value;
-            }
-
-            MsiApi.MsiDatabaseInsertRow(this, tableName, converted);
-        }
-
         [SuppressMessage("Microsoft.Design", "CA1011:ConsiderPassingBaseTypesAsParameters")]
         public void Merge(Database otherDatabase, string errorTable)
         {
@@ -460,6 +573,11 @@ namespace IsWiX.WindowsInstaller
         /// and the merge fails. The installer checks that the two databases have the same schema before
         /// checking for row merge conflicts. If the schemas are incompatible, the databases have be
         /// modified.
+        /// </p><p>
+        /// Rows that do not conflict are merged even when the merge fails because other rows do. After a data
+        /// conflict, <see cref="MergeException.ConflictTables"/> names the tables and, when an error table was
+        /// given, that table holds their row counts. A schema difference raises a <see cref="MergeException"/>
+        /// with an empty (not null) conflict list.
         /// </p><p>
         /// Win32 MSI API:
         /// <a href="http://msdn.microsoft.com/library/en-us/msi/setup/msidatabasemerge.asp">MsiDatabaseMerge</a>
