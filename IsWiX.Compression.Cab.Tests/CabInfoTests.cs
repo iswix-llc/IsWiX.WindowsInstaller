@@ -200,12 +200,6 @@ public class CabInfoTests : IDisposable
     }
 
     [Fact]
-    public void PackIsNotImplemented()
-    {
-        Assert.Throws<NotSupportedException>(() => new CabInfo(Path.Combine(this.temp, "new.cab")).Pack(this.temp));
-    }
-
-    [Fact]
     public void DosDateAndTimeRoundTrips()
     {
         var original = new DateTime(2024, 6, 30, 13, 45, 22);

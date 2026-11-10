@@ -16,10 +16,25 @@ namespace IsWiX.Compression.Cab
         {
         }
 
-        /// <summary>Packing cabinets is not implemented yet.</summary>
+        /// <summary>
+        /// Packs files into one cabinet, or into several when <paramref name="maxArchiveSize"/> is greater than zero and
+        /// the cabinet would be larger. The files are named by their paths inside the cabinet; the context supplies their data.
+        /// <see cref="CompressionEngine.CompressionLevel"/> selects the method: None stores, Min uses MSZIP, Normal uses LZX
+        /// with an 18 bit window and Max uses LZX with a 21 bit window.
+        /// </summary>
         public override void Pack(IPackStreamContext streamContext, IEnumerable<string> files, long maxArchiveSize)
         {
-            throw new NotSupportedException("Packing cabinets is not implemented.");
+            if (streamContext == null)
+            {
+                throw new ArgumentNullException("streamContext");
+            }
+
+            if (files == null)
+            {
+                throw new ArgumentNullException("files");
+            }
+
+            CabWriter.Write(this, streamContext, files, maxArchiveSize);
         }
 
         /// <summary>Checks whether a stream, at its current position, begins with a cabinet header.</summary>

@@ -78,9 +78,13 @@ namespace IsWiX.Compression.Cab
             this.output = new byte[totalOutputSize];
         }
 
+        // The window the matches copy from. The E8 translation is reversed in a copy, because the compressor's window
+        // holds the translated bytes.
+        private byte[] translated;
+
         public byte[] Output
         {
-            get { return this.output; }
+            get { return this.translated ?? this.output; }
         }
 
         /// <summary>Decodes one cabinet data block that produces frameSize bytes of output.</summary>
@@ -504,14 +508,27 @@ namespace IsWiX.Compression.Cab
         {
             if (!this.intelStarted || this.intelFileSize == 0 || this.frameNumber >= 32768 || frameSize <= 10)
             {
+                if (this.translated != null)
+                {
+                    Buffer.BlockCopy(this.output, this.frameStart, this.translated, this.frameStart, frameSize);
+                }
+
                 this.intelCurrentPosition += frameSize;
                 return;
             }
 
+            if (this.translated == null)
+            {
+                this.translated = new byte[this.output.Length];
+                Buffer.BlockCopy(this.output, 0, this.translated, 0, this.frameStart);
+            }
+
+            Buffer.BlockCopy(this.output, this.frameStart, this.translated, this.frameStart, frameSize);
+
             var data = this.frameStart;
             var dataEnd = this.frameStart + frameSize - 10;
             var current = this.intelCurrentPosition;
-            var buffer = this.output;
+            var buffer = this.translated;
 
             while (data < dataEnd)
             {

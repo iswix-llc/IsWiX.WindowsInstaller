@@ -246,10 +246,35 @@ namespace IsWiX.Compression
             return new StreamReader(this.OpenRead(fileName));
         }
 
-        /// <summary>Packing is not implemented yet.</summary>
+        /// <summary>Packs the files of a directory (not its subdirectories) into this archive with the best compression.</summary>
         public void Pack(string sourceDirectory)
         {
-            throw new NotSupportedException("Packing archives is not implemented.");
+            this.Pack(sourceDirectory, false, CompressionLevel.Max);
+        }
+
+        /// <summary>Packs the files of a directory into this archive. The names inside the archive are relative to the directory.</summary>
+        public void Pack(string sourceDirectory, bool includeSubdirectories, CompressionLevel compressionLevel)
+        {
+            if (sourceDirectory == null)
+            {
+                throw new ArgumentNullException("sourceDirectory");
+            }
+
+            var root = Path.GetFullPath(sourceDirectory);
+            var names = new List<string>();
+            var option = includeSubdirectories ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
+            foreach (var file in System.IO.Directory.GetFiles(root, "*", option))
+            {
+                var relative = file.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                names.Add(relative.Replace(Path.DirectorySeparatorChar, '\\'));
+            }
+
+            names.Sort(StringComparer.OrdinalIgnoreCase);
+            using (var engine = this.CreateCompressionEngine())
+            {
+                engine.CompressionLevel = compressionLevel;
+                engine.Pack(new PackContext(this.FullName, root), names, 0);
+            }
         }
 
         internal ArchiveFileInfo GetFile(string path)
@@ -272,6 +297,76 @@ namespace IsWiX.Compression
                 }
 
                 return files;
+            }
+        }
+
+        /// <summary>Reads the files to pack from a directory and writes the archive (and any continuation archives) beside the first.</summary>
+        private sealed class PackContext : IPackStreamContext
+        {
+            private readonly string archivePath;
+            private readonly string directory;
+
+            public PackContext(string archivePath, string directory)
+            {
+                this.archivePath = archivePath;
+                this.directory = directory;
+            }
+
+            public string GetArchiveName(int archiveNumber)
+            {
+                var name = Path.GetFileName(this.archivePath);
+                if (archiveNumber == 0)
+                {
+                    return name;
+                }
+
+                // Continuation archives are named like WiX names them: the stem plus a, b, ... z, aa, ab, ...
+                var extension = Path.GetExtension(name);
+                var stem = Path.GetFileNameWithoutExtension(name);
+                var second = archiveNumber % 26;
+                var first = (archiveNumber - second) / 26;
+                if (archiveNumber <= 26)
+                {
+                    return stem + (char)('a' - 1 + archiveNumber) + extension;
+                }
+
+                if (second == 0)
+                {
+                    second = 26;
+                    first--;
+                }
+
+                return stem + (char)('a' - 1 + first) + (char)('a' - 1 + second) + extension;
+            }
+
+            public Stream OpenArchiveWriteStream(int archiveNumber, string archiveName, bool truncate, CompressionEngine compressionEngine)
+            {
+                var folder = Path.GetDirectoryName(this.archivePath);
+                var path = archiveNumber == 0 ? this.archivePath : Path.Combine(folder, archiveName);
+                return new FileStream(path, truncate ? FileMode.Create : FileMode.OpenOrCreate, FileAccess.Write, FileShare.Read);
+            }
+
+            public void CloseArchiveWriteStream(int archiveNumber, string archiveName, Stream stream)
+            {
+                stream.Dispose();
+            }
+
+            public Stream OpenFileReadStream(string path, out FileAttributes attributes, out DateTime lastWriteTime)
+            {
+                var full = Path.Combine(this.directory, path.Replace('\\', Path.DirectorySeparatorChar));
+                attributes = File.GetAttributes(full);
+                lastWriteTime = File.GetLastWriteTime(full);
+                return new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read);
+            }
+
+            public void CloseFileReadStream(string path, Stream stream)
+            {
+                stream.Dispose();
+            }
+
+            public object GetOption(string optionName, object[] parameters)
+            {
+                return null;
             }
         }
 

@@ -246,6 +246,10 @@ internal static class Program
                 ReplayIdtsWithFile(report, root, args[2], args[3], variant);
             }
         }
+        else if (args.Length > 2 && args[1] == "--cabsize")
+        {
+            CabSize(report, root, args[2]);
+        }
         else if (args.Length > 3 && args[1] == "--managed")
         {
             ManagedReplay(report, root, args[2], args[3]);
@@ -604,6 +608,25 @@ internal static class Program
 
     // Builds a database with the managed library from the same IDT files WiX gave to msi.dll and compares its string pool
     // with the pool of the database Windows built.
+    // Packs every file under a folder into cabinets at each level and reports the sizes, to compare the managed LZX encoder with the native one.
+    private static void CabSize(StringBuilder report, string root, string folder)
+    {
+        report.AppendLine("== cabinet sizes for " + folder);
+        long total = Directory.GetFiles(folder, "*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length);
+        report.AppendLine("uncompressed bytes: " + total);
+        foreach (IsWiX.Compression.CompressionLevel level in new[] { IsWiX.Compression.CompressionLevel.Min, IsWiX.Compression.CompressionLevel.Normal, IsWiX.Compression.CompressionLevel.Max })
+        {
+            string path = Path.Combine(root, "cabsize-" + level + ".cab");
+            var cab = new IsWiX.Compression.Cab.CabInfo(path);
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            cab.Pack(folder, true, level);
+            watch.Stop();
+            report.AppendLine(level + ": " + cab.Length + " bytes, ratio " + (cab.Length / (double) total).ToString("0.0000") + ", " + watch.ElapsedMilliseconds + " ms");
+        }
+
+        report.AppendLine();
+    }
+
     private static void ManagedReplay(StringBuilder report, string root, string idtFolder, string originalMsi)
     {
         report.AppendLine("== managed build from WiX IDT files in " + idtFolder);

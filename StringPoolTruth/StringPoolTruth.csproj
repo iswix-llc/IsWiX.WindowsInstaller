@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\IsWiX.WindowsInstaller\IsWiX.WindowsInstaller.csproj" />
+    <ProjectReference Include="..\IsWiX.Compression.Cab\IsWiX.Compression.Cab.csproj" />
   </ItemGroup>
 
 </Project>
