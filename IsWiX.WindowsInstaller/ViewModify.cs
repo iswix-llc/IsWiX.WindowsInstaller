@@ -72,13 +72,15 @@ namespace IsWiX.WindowsInstaller
                     break;
 
                 case (int) ViewModifyMode.Assign:
+                    // msi.dll does not hold an Assign to the declared width of a text column: WiX assigns File.Language lists
+                    // (one language id per satellite folder, so hundreds of characters) into its 20 character column.
                     if (existing >= 0)
                     {
-                        table.Update(new[] { (existing, Merge(table.Rows[existing], supplied, named)) }, database.EnforceStringWidth);
+                        table.Update(new[] { (existing, Merge(table.Rows[existing], supplied, named)) }, checkStringWidth: false);
                     }
                     else
                     {
-                        table.Insert(supplied, database.EnforceStringWidth);
+                        table.Insert(supplied, checkStringWidth: false);
                     }
                     break;
 

@@ -119,6 +119,25 @@ public class InsertRowTests : IDisposable
     }
 
     [Fact]
+    public void AssignThroughAViewIgnoresTheDeclaredWidth()
+    {
+        // msi.dll lets WiX assign a File.Language list of dozens of ids into a 20 character column.
+        using Database db = NewDatabase();
+        db.InsertRow("Sample", ("Key", "a"));
+        string longKey = "1033,1031,1036,1040,1041,1042,1049,2052";
+
+        using (View view = db.OpenView("SELECT `Key`, `Value`, `Note` FROM `Sample`"))
+        {
+            view.Execute();
+            using var assign = new Record(longKey, 3, "n");
+            view.Modify(ViewModifyMode.Assign, assign);
+        }
+
+        Assert.Contains(longKey + "|3|n", Rows(db));
+        Assert.True(db.EnforceStringWidth);
+    }
+
+    [Fact]
     public void WidthCheckingIsOnByDefaultForSqlWrites()
     {
         using Database db = NewDatabase();
