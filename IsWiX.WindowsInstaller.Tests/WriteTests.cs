@@ -179,6 +179,32 @@ public class WriteTests : IDisposable
     }
 
     [Fact]
+    public void ImportTurnsLineBreakEscapesIntoLineBreaks()
+    {
+        // An IDT line cannot hold a line break: text carries a carriage return as 0x11 and a line feed as 0x19.
+        string path = CopyOfFixture();
+        string idt = Path.Combine(folder, "Breaks.idt");
+        File.WriteAllText(idt, "Id\tText\r\ns72\tL0\r\nBreaks\tId\r\nrow\tone\u0011\u0019two\u0019three\r\n");
+
+        using (var db = new Database(path, DatabaseOpenMode.Transact))
+        {
+            db.Import(idt);
+            db.Commit();
+        }
+
+        using var reopened = new Database(path);
+        using View select = reopened.OpenView("SELECT `Id`, `Text` FROM `Breaks`");
+        select.Execute();
+        using Record? row = select.Fetch();
+        Assert.NotNull(row);
+        Assert.Equal("one\r\ntwo\nthree", row!.GetString(2));
+
+        string exported = Path.Combine(folder, "Breaks.exported.idt");
+        reopened.Export("Breaks", exported);
+        Assert.Contains("one\u0011\u0019two\u0019three", File.ReadAllText(exported));
+    }
+
+    [Fact]
     public void ImportAcceptsStringsLongerThanTheColumnWidth()
     {
         // A merge module's modularized identifier can be longer than its s64 column; msi.dll imports it anyway.

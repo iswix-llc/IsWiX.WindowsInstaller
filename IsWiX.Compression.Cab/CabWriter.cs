@@ -508,7 +508,7 @@ namespace IsWiX.Compression.Cab
                 }
 
                 var windowBits = level == CompressionLevel.Max ? 21 : 18;
-                this.Lzx = new LzxEncoder(windowBits);
+                this.Lzx = new LzxEncoder(windowBits, level == CompressionLevel.Max);
                 this.TypeCompress = (ushort)(3 | (windowBits << 8));
             }
         }

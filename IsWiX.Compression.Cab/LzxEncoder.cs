@@ -45,6 +45,7 @@ namespace IsWiX.Compression.Cab
         private readonly int maxOffset;
         private readonly int mainElements;
         private readonly int maxChain;
+        private readonly bool thorough;
         private readonly byte[] history;
         private readonly int[] head = new int[1 << HashBits];
         private readonly int[] prev;
@@ -61,8 +62,11 @@ namespace IsWiX.Compression.Cab
         private int intelCurrent;
         private bool intelStarted;
 
-        public LzxEncoder(int windowBits)
+        /// <param name="windowBits">The window size as a power of two, 15 to 21.</param>
+        /// <param name="thorough">True for the cost-based parse (smaller output, several times slower); false for a greedy search with one-step lazy matching.</param>
+        public LzxEncoder(int windowBits, bool thorough = false)
         {
+            this.thorough = thorough;
             if (windowBits < 15 || windowBits > 21)
             {
                 throw new ArgumentOutOfRangeException(nameof(windowBits));
@@ -88,7 +92,7 @@ namespace IsWiX.Compression.Cab
             this.mainLengths = new byte[this.mainElements];
             this.history = new byte[this.windowSize + FrameSize + 512];
             this.prev = new int[this.windowSize];
-            this.maxChain = windowBits >= 21 ? 128 : windowBits >= 18 ? 96 : 64;
+            this.maxChain = thorough ? (windowBits >= 21 ? 128 : windowBits >= 18 ? 96 : 64) : (windowBits >= 21 ? 64 : windowBits >= 18 ? 32 : 16);
 
             for (var i = 0; i < this.head.Length; i++)
             {
@@ -128,7 +132,9 @@ namespace IsWiX.Compression.Cab
             var tokenFooterBits = new byte[count];
             var mainFrequencies = new int[this.mainElements];
             var lengthFrequencies = new int[NumSecondaryLengths];
-            var tokens = this.Tokenize(start, count, tokenMain, tokenLength, tokenFooterValue, tokenFooterBits, mainFrequencies, lengthFrequencies);
+            var tokens = this.thorough
+                ? this.TokenizeOptimal(start, count, tokenMain, tokenLength, tokenFooterValue, tokenFooterBits, mainFrequencies, lengthFrequencies)
+                : this.TokenizeFast(start, count, tokenMain, tokenLength, tokenFooterValue, tokenFooterBits, mainFrequencies, lengthFrequencies);
 
             if (!this.intelStarted && mainFrequencies[0xe8] == 0)
             {
@@ -507,7 +513,7 @@ namespace IsWiX.Compression.Cab
             return costs;
         }
 
-        private int Tokenize(int start, int count, int[] tokenMain, int[] tokenLength, int[] tokenFooterValue, byte[] tokenFooterBits, int[] mainFrequencies, int[] lengthFrequencies)
+        private int TokenizeOptimal(int start, int count, int[] tokenMain, int[] tokenLength, int[] tokenFooterValue, byte[] tokenFooterBits, int[] mainFrequencies, int[] lengthFrequencies)
         {
             var slots = (this.mainElements - NumChars) >> 3;
             var end = start + count;
@@ -697,6 +703,187 @@ namespace IsWiX.Compression.Cab
 
             return tokens;
         }
+
+        private int TokenizeFast(int start, int count, int[] tokenMain, int[] tokenLength, int[] tokenFooterValue, byte[] tokenFooterBits, int[] mainFrequencies, int[] lengthFrequencies)
+        {
+            var slots = (this.mainElements - NumChars) >> 3;
+            var end = start + count;
+            var tokens = 0;
+            var position = start;
+
+            var haveNext = false;
+            var nextLength = 0;
+            var nextOffset = 0;
+
+            while (position < end)
+            {
+                int length;
+                int offset;
+                if (haveNext)
+                {
+                    length = nextLength;
+                    offset = nextOffset;
+                    haveNext = false;
+                }
+                else
+                {
+                    this.FindMatch(position, end, out length, out offset);
+                }
+
+                if (length >= 3 && position + 1 < end && length < 32)
+                {
+                    this.FindMatch(position + 1, end, out var length2, out var offset2);
+                    if (length2 > length)
+                    {
+                        // A longer match starts one byte later: emit this byte as a literal.
+                        this.Insert(position);
+                        tokenMain[tokens] = this.history[position];
+                        tokenLength[tokens] = -1;
+                        tokenFooterBits[tokens] = 0;
+                        tokens++;
+                        position++;
+                        haveNext = true;
+                        nextLength = length2;
+                        nextOffset = offset2;
+                        continue;
+                    }
+                }
+
+                if (length < 3)
+                {
+                    this.Insert(position);
+                    tokenMain[tokens] = this.history[position];
+                    tokenLength[tokens] = -1;
+                    tokenFooterBits[tokens] = 0;
+                    tokens++;
+                    position++;
+                    continue;
+                }
+
+                int slot;
+                var footerBits = 0;
+                var footerValue = 0;
+                if (offset == this.r0)
+                {
+                    slot = 0;
+                }
+                else if (offset == this.r1)
+                {
+                    slot = 1;
+                    this.r1 = this.r0;
+                    this.r0 = offset;
+                }
+                else if (offset == this.r2)
+                {
+                    slot = 2;
+                    this.r2 = this.r0;
+                    this.r0 = offset;
+                }
+                else
+                {
+                    var formatted = offset + 2;
+                    slot = PositionSlot(formatted, slots);
+                    footerBits = LzxDecoder.ExtraBits[slot];
+                    footerValue = formatted - LzxDecoder.PositionBase[slot];
+                    this.r2 = this.r1;
+                    this.r1 = this.r0;
+                    this.r0 = offset;
+                }
+
+                var lengthCode = length - MinMatch;
+                var primary = Math.Min(lengthCode, NumPrimaryLengths);
+                tokenMain[tokens] = NumChars + (slot << 3) + primary;
+                tokenLength[tokens] = lengthCode >= NumPrimaryLengths ? lengthCode - NumPrimaryLengths : -1;
+                tokenFooterValue[tokens] = footerValue;
+                tokenFooterBits[tokens] = (byte)footerBits;
+                tokens++;
+
+                for (var i = 0; i < length; i++)
+                {
+                    this.Insert(position + i);
+                }
+
+                position += length;
+            }
+
+            for (var t = 0; t < tokens; t++)
+            {
+                mainFrequencies[tokenMain[t]]++;
+                if (tokenLength[t] >= 0)
+                {
+                    lengthFrequencies[tokenLength[t]]++;
+                }
+            }
+
+            return tokens;
+        }
+
+        private void FindMatch(int index, int end, out int bestLength, out int bestOffset)
+        {
+            bestLength = 0;
+            bestOffset = 0;
+
+            var limit = Math.Min(MaxMatch, end - index);
+            if (limit < 3)
+            {
+                return;
+            }
+
+            var available = index; // History index equals the number of bytes before this one in the buffer.
+
+            this.TryOffset(this.r0, index, limit, available, ref bestLength, ref bestOffset);
+            this.TryOffset(this.r1, index, limit, available, ref bestLength, ref bestOffset);
+            this.TryOffset(this.r2, index, limit, available, ref bestLength, ref bestOffset);
+
+            if (index + 2 >= this.historyLength)
+            {
+                return;
+            }
+
+            var absolute = this.baseAbsolute + index;
+            var candidate = this.head[this.HashAt(index)];
+            var depth = this.maxChain;
+            while (candidate >= this.baseAbsolute && absolute - candidate <= this.maxOffset && depth-- > 0)
+            {
+                var distance = absolute - candidate;
+                this.TryOffset(distance, index, limit, available, ref bestLength, ref bestOffset);
+                if (bestLength >= limit)
+                {
+                    break;
+                }
+
+                candidate = this.prev[candidate & (this.windowSize - 1)];
+            }
+
+            // Short matches that are far away cost more than literals.
+            if (bestLength == 3 && bestOffset > 4096 && bestOffset != this.r0 && bestOffset != this.r1 && bestOffset != this.r2)
+            {
+                bestLength = 0;
+                bestOffset = 0;
+            }
+        }
+
+        private void TryOffset(int offset, int index, int limit, int available, ref int bestLength, ref int bestOffset)
+        {
+            if (offset <= 0 || offset > this.maxOffset || offset > available)
+            {
+                return;
+            }
+
+            var source = index - offset;
+            var length = 0;
+            while (length < limit && this.history[source + length] == this.history[index + length])
+            {
+                length++;
+            }
+
+            if (length > bestLength)
+            {
+                bestLength = length;
+                bestOffset = offset;
+            }
+        }
+
 
         // Replaces relative E8 call operands by absolute ones, exactly the inverse of what LzxDecoder does after decoding a frame.
         private void TranslateE8(byte[] buffer, int count)

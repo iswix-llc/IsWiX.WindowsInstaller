@@ -2379,7 +2379,7 @@ namespace IsWiX.WindowsInstaller
             switch (column.Type)
             {
                 case MsiColumnType.String:
-                    return text.Length == 0 ? null : text;
+                    return text.Length == 0 ? null : UnescapeIdtText(text);
                 case MsiColumnType.Integer:
                     if (text.Length == 0)
                     {
@@ -2485,10 +2485,25 @@ namespace IsWiX.WindowsInstaller
                 case int number:
                     return number.ToString(CultureInfo.InvariantCulture);
                 case string text:
-                    return text;
+                    return EscapeIdtText(text);
                 default:
                     return string.Empty; // binary data is stored in separate files, not in the IDT text
             }
+        }
+
+        // An IDT line cannot hold a line break, so text carries a carriage return as 0x11 and a line feed as 0x19.
+        private static string UnescapeIdtText(string text)
+        {
+            return text.IndexOf('\u0011') < 0 && text.IndexOf('\u0019') < 0
+                ? text
+                : text.Replace('\u0011', '\r').Replace('\u0019', '\n');
+        }
+
+        private static string EscapeIdtText(string text)
+        {
+            return text.IndexOf('\r') < 0 && text.IndexOf('\n') < 0
+                ? text
+                : text.Replace('\r', '\u0011').Replace('\n', '\u0019');
         }
 
         internal void ReleaseReader()
