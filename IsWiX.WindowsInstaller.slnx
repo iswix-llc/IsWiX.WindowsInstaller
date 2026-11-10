@@ -4,5 +4,4 @@
   <Project Path="IsWiX.Compression/IsWiX.Compression.csproj" />
   <Project Path="IsWiX.Compression.Cab/IsWiX.Compression.Cab.csproj" />
   <Project Path="IsWiX.Compression.Cab.Tests/IsWiX.Compression.Cab.Tests.csproj" />
-  <Project Path="TestApp/TestApp.csproj" />
 </Solution>
