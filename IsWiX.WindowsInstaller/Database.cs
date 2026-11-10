@@ -1045,6 +1045,9 @@ namespace IsWiX.WindowsInstaller
         private MsiDatabase reader;
         private bool dirty;
         private readonly List<string> addedTables = new List<string>();
+        private readonly List<PoolEvent> poolEvents = new List<PoolEvent>();
+        private readonly StringPoolCarrier poolCarrier = new StringPoolCarrier();
+        private string? lastImportedTable;
         private readonly List<string> removedTables = new List<string>();
         private readonly List<string> alteredTables = new List<string>();
         private int? codePageOverride;
@@ -1267,6 +1270,7 @@ namespace IsWiX.WindowsInstaller
         {
             this.RequireWritable();
             this.pendingStreams[name] = data;
+            this.poolEvents.Add(PoolEvent.ForStream(this.lastImportedTable, !this.poolEvents.Any(e => e.IsStream)));
             this.Changed();
         }
 
@@ -1286,6 +1290,7 @@ namespace IsWiX.WindowsInstaller
                 row[index] = value.Value;
             }
 
+            table.InternReversed = true;
             table.Insert(row, checkStringWidth: false);
             this.Changed();
         }
@@ -1363,7 +1368,7 @@ namespace IsWiX.WindowsInstaller
                     }
                     rows.Add(copy);
                 }
-                writeTables.Add(new MsiWriteTable(table.Name, columns, rows));
+                writeTables.Add(new MsiWriteTable(table.Name, columns, rows) { InternReversed = table.InternReversed });
             }
 
             // Plain streams are kept, except binary streams of tables with binary columns: those are owned by
@@ -1421,7 +1426,7 @@ namespace IsWiX.WindowsInstaller
             {
                 using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 {
-                    MsiWriter.WriteSources(output, codePage, writeTables, streams, this.reader.StringPoolEntries, storages, this.isPatch ? PatchClsid : null);
+                    MsiWriter.WriteSources(output, codePage, writeTables, streams, this.reader.StringPoolEntries, storages, this.isPatch ? PatchClsid : null, poolEvents: this.poolEvents.ToArray(), carrier: this.poolCarrier);
                 }
                 this.reader.Dispose();
                 Compat.MoveOverwrite(temp, this.filePath);
@@ -2245,6 +2250,7 @@ namespace IsWiX.WindowsInstaller
             }
 
             this.PutTable(table);
+            this.lastImportedTable = table.Name;
             this.Changed();
         }
 
@@ -2255,6 +2261,7 @@ namespace IsWiX.WindowsInstaller
         private void ImportSummaryInformation(string[] lines)
         {
             SummaryInfo info = this.SummaryInfo;
+            var poolRows = new List<(int Id, string Value)>();
             for (int line = 3; line < lines.Length; line++)
             {
                 if (lines[line].Length == 0)
@@ -2267,6 +2274,7 @@ namespace IsWiX.WindowsInstaller
                     throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
                 }
                 string value = cells[1];
+                poolRows.Add((id, value));
                 switch (id)
                 {
                     case 1: info.CodePage = short.Parse(value, CultureInfo.InvariantCulture); break;
@@ -2289,6 +2297,7 @@ namespace IsWiX.WindowsInstaller
                     default: throw new MsiErrorException((uint) MsiError.INVALID_TABLE);
                 }
             }
+            this.poolEvents.Add(PoolEvent.ForSummary(this.lastImportedTable, poolRows));
             this.Changed();
         }
 

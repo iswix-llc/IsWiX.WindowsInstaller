@@ -1,8 +1,8 @@
 namespace IsWiX.WindowsInstaller.Format.Internal;
 
 /// <summary>
-/// Writes an OLE Compound File (MS-CFB, major version 3, 512-byte sectors) that holds the given
-/// named streams. Streams shorter than 4096 bytes go in the mini stream, as the format requires.
+/// Writes an OLE Compound File (MS-CFB, major version 3, 512-byte sectors; or, with the Windows layout,
+/// version 4 with 4096-byte sectors like Windows Installer writes) that holds the given named streams. Streams shorter than 4096 bytes go in the mini stream, as the format requires.
 /// </summary>
 internal static class CompoundFileWriter
 {
@@ -35,7 +35,8 @@ internal static class CompoundFileWriter
         /// <summary>Returns the bytes of the stream. Called when the stream is written, so most streams are never held at once.</summary>
         public Func<byte[]> Read { get; }
         public bool IsMini => Length > 0 && Length < MiniStreamCutoff;
-        public int RegularSectors => (int) ((Length + SectorSize - 1) / SectorSize);
+        public int RegularSectors => SectorsOf(SectorSize);
+        public int SectorsOf(int sectorSize) => (int) ((Length + sectorSize - 1) / sectorSize);
         public int MiniSectors => (int) ((Length + MiniSectorSize - 1) / MiniSectorSize);
 
         /// <summary>First sector of the stream, in the regular or the mini sector space.</summary>
@@ -54,13 +55,29 @@ internal static class CompoundFileWriter
 
         /// <summary>The deepest level of the tree this entry is in.</summary>
         public int TreeMaxDepth { get; set; }
+
+        // Red-black tree links, used by the Windows layout.
+        public Item? RbParent { get; set; }
+        public Item? RbLeft { get; set; }
+        public Item? RbRight { get; set; }
+        public bool Red { get; set; }
     }
 
     /// <summary>A storage at the root of the file, with the streams inside it.</summary>
     public sealed record Storage(string Name, byte[]? Clsid, IReadOnlyList<(string Name, long Length, Func<byte[]> Read)> Streams);
 
-    public static void Write(Stream output, IReadOnlyList<(string Name, long Length, Func<byte[]> Read)> streams, byte[]? rootClsid = null, IReadOnlyList<Storage>? storages = null)
+    /// <param name="windowsLayout">
+    /// Write the file as Windows Installer does (version 4, 4096-byte sectors, directory entries in the order the streams are given,
+    /// red-black tree). Otherwise the streams are sorted and the file is version 3 with 512-byte sectors.
+    /// </param>
+    public static void Write(Stream output, IReadOnlyList<(string Name, long Length, Func<byte[]> Read)> streams, byte[]? rootClsid = null, IReadOnlyList<Storage>? storages = null, bool windowsLayout = false)
     {
+        if (windowsLayout)
+        {
+            WriteWindows(output, streams, rootClsid, storages);
+            return;
+        }
+
         // Every directory entry except the root. The root's entries come first, then each storage's streams.
         var items = new List<Item>();
         var rootLevel = streams.Select(s => new Item(s.Name, s.Length, s.Read)).ToList();
@@ -174,7 +191,7 @@ internal static class CompoundFileWriter
         var fatBuf = new byte[fatSectors * SectorSize];
         var difatBuf = new byte[difatSectors * SectorSize];
 
-        WriteDirectory(dirBuf, items, rootChild, miniSectorTotal, containerStart, rootClsid);
+        WriteDirectory(dirBuf, items, rootChild, miniSectorTotal, containerStart, rootClsid, false);
         Words(miniFat, miniFatBuf, 0);
         Words(fat, fatBuf, 0);
 
@@ -226,6 +243,302 @@ internal static class CompoundFileWriter
         output.Write(fatBuf, 0, fatBuf.Length);
     }
 
+    private const int WindowsSectorSize = 4096;
+
+    /// <summary>
+    /// Writes the file the way Windows Installer does: version 4 with 4096-byte sectors, the directory in the order the streams
+    /// are given (which is the order they were created), linked as a red-black tree, and the sectors laid out as FAT, DIFAT,
+    /// directory, mini FAT, mini stream, then the large streams in directory order.
+    /// </summary>
+    private static void WriteWindows(Stream output, IReadOnlyList<(string Name, long Length, Func<byte[]> Read)> streams, byte[]? rootClsid, IReadOnlyList<Storage>? storages)
+    {
+        const int ss = WindowsSectorSize;
+        const int perSector = ss / 4;
+        const int entriesPerSector = ss / 128;
+
+        var items = new List<Item>();
+        var rootLevel = streams.Select(s => new Item(s.Name, s.Length, s.Read)).ToList();
+        var storageLevels = new Dictionary<Item, List<Item>>();
+        if (storages != null)
+        {
+            foreach (Storage storage in storages)
+            {
+                var entry = new Item(storage.Name, 0, () => Array.Empty<byte>()) { IsStorage = true, Clsid = storage.Clsid };
+                rootLevel.Add(entry);
+                storageLevels[entry] = storage.Streams.Select(c => new Item(c.Name, c.Length, c.Read)).ToList();
+            }
+        }
+        int nextIndex = 1; // entry 0 is the root storage
+        foreach (Item entry in rootLevel)
+        {
+            entry.DirectoryIndex = nextIndex++;
+            items.Add(entry);
+        }
+        CheckDuplicatesAnyOrder(rootLevel);
+        foreach (Item entry in rootLevel.Where(e => e.IsStorage))
+        {
+            List<Item> level = storageLevels[entry];
+            CheckDuplicatesAnyOrder(level);
+            foreach (Item child in level)
+            {
+                child.DirectoryIndex = nextIndex++;
+                items.Add(child);
+            }
+            entry.ChildIndex = LinkRedBlack(level);
+        }
+        int rootChild = LinkRedBlack(rootLevel);
+
+        var mini = items.Where(i => i.IsMini).ToList();
+        var regular = items.Where(i => !i.IsMini && i.Length > 0).ToList();
+        int miniSectorTotal = mini.Sum(i => i.MiniSectors);
+        int containerSectors = (int) (((long) miniSectorTotal * MiniSectorSize + ss - 1) / ss);
+        int miniFatSectors = (miniSectorTotal + perSector - 1) / perSector;
+        int dirSectors = (items.Count + 1 + entriesPerSector - 1) / entriesPerSector;
+        int regularSectors = regular.Sum(i => i.SectorsOf(ss));
+        int fixedSectors = dirSectors + miniFatSectors + containerSectors + regularSectors;
+
+        int fatSectors = 0, difatSectors = 0;
+        while (true)
+        {
+            int f = (fixedSectors + difatSectors + fatSectors + perSector - 1) / perSector;
+            int d = f > HeaderDifatEntries ? (f - HeaderDifatEntries + perSector - 2) / (perSector - 1) : 0;
+            if (f == fatSectors && d == difatSectors) break;
+            fatSectors = f;
+            difatSectors = d;
+        }
+
+        // FAT first, then DIFAT, directory, mini FAT, mini stream and the large streams.
+        int difatStart = fatSectors;
+        int next = fatSectors + difatSectors;
+        int dirStart = next;
+        next += dirSectors;
+        int miniFatStart = miniFatSectors > 0 ? next : -2;
+        next += miniFatSectors;
+        int containerStart = containerSectors > 0 ? next : -2;
+        next += containerSectors;
+        foreach (Item item in regular)
+        {
+            item.Start = (uint) next;
+            next += item.SectorsOf(ss);
+        }
+
+        uint miniCursor = 0;
+        foreach (Item item in mini)
+        {
+            item.Start = miniCursor;
+            miniCursor += (uint) item.MiniSectors;
+        }
+
+        var fat = new uint[fatSectors * perSector];
+        Compat.Fill(fat, FreeSector);
+        for (int k = 0; k < fatSectors; k++) fat[k] = FatSector;
+        for (int k = 0; k < difatSectors; k++) fat[difatStart + k] = DifatSector;
+        ChainRun(fat, dirStart, dirSectors);
+        if (miniFatSectors > 0) ChainRun(fat, miniFatStart, miniFatSectors);
+        if (containerSectors > 0) ChainRun(fat, containerStart, containerSectors);
+        foreach (Item item in regular)
+            ChainRun(fat, (int) item.Start, item.SectorsOf(ss));
+
+        var miniFat = new uint[miniFatSectors * perSector];
+        Compat.Fill(miniFat, FreeSector);
+        foreach (Item item in mini)
+        {
+            for (int k = 0; k < item.MiniSectors; k++)
+            {
+                int index = (int) item.Start + k;
+                miniFat[index] = k == item.MiniSectors - 1 ? EndOfChain : (uint) (index + 1);
+            }
+        }
+
+        var dirBuf = new byte[dirSectors * ss];
+        var container = new byte[containerSectors * ss];
+        foreach (Item item in mini)
+        {
+            byte[] data = ReadItem(item);
+            Array.Copy(data, 0, container, (int) item.Start * MiniSectorSize, data.Length);
+        }
+        var miniFatBuf = new byte[miniFatSectors * ss];
+        var fatBuf = new byte[fatSectors * ss];
+        var difatBuf = new byte[difatSectors * ss];
+
+        WriteDirectory(dirBuf, items, rootChild, miniSectorTotal, containerStart, rootClsid, true);
+        PutWords(miniFat, miniFatBuf);
+        PutWords(fat, fatBuf);
+        for (int k = 0; k < difatSectors; k++)
+        {
+            var sector = new uint[perSector];
+            Compat.Fill(sector, FreeSector);
+            for (int j = 0; j < perSector - 1; j++)
+            {
+                int fatIndex = HeaderDifatEntries + k * (perSector - 1) + j;
+                if (fatIndex < fatSectors) sector[j] = (uint) fatIndex;
+            }
+            sector[perSector - 1] = k == difatSectors - 1 ? EndOfChain : (uint) (difatStart + k + 1);
+            for (int w = 0; w < perSector; w++)
+                Put32(difatBuf, k * ss + w * 4, sector[w]);
+        }
+
+        var header = new byte[ss]; // the 512-byte header is padded with zeros to a whole sector
+        var signature = new byte[] { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 };
+        signature.CopyTo(header, 0);
+        Put16(header, 24, 0x003E); // minor version
+        Put16(header, 26, 0x0004); // major version
+        Put16(header, 28, 0xFFFE); // byte order
+        Put16(header, 30, 12);     // 4096-byte sectors
+        Put16(header, 32, 6);      // 64-byte mini sectors
+        Put32(header, 40, (uint) dirSectors);
+        Put32(header, 44, (uint) fatSectors);
+        Put32(header, 48, (uint) dirStart);
+        Put32(header, 56, MiniStreamCutoff);
+        Put32(header, 60, miniFatSectors > 0 ? (uint) miniFatStart : EndOfChain);
+        Put32(header, 64, (uint) miniFatSectors);
+        Put32(header, 68, difatSectors > 0 ? (uint) difatStart : EndOfChain);
+        Put32(header, 72, (uint) difatSectors);
+        for (int k = 0; k < HeaderDifatEntries; k++)
+            Put32(header, 76 + k * 4, k < fatSectors ? (uint) k : FreeSector);
+
+        output.Write(header, 0, header.Length);
+        output.Write(fatBuf, 0, fatBuf.Length);
+        if (difatSectors > 0) output.Write(difatBuf, 0, difatBuf.Length);
+        output.Write(dirBuf, 0, dirBuf.Length);
+        if (miniFatSectors > 0) output.Write(miniFatBuf, 0, miniFatBuf.Length);
+        if (containerSectors > 0) output.Write(container, 0, container.Length);
+        var zeros = new byte[ss];
+        foreach (Item item in regular)
+        {
+            byte[] data = ReadItem(item);
+            output.Write(data, 0, data.Length);
+            output.Write(zeros, 0, item.SectorsOf(ss) * ss - data.Length);
+        }
+    }
+
+    private static void PutWords(uint[] values, byte[] body)
+    {
+        for (int k = 0; k < values.Length; k++)
+            Put32(body, k * 4, values[k]);
+    }
+
+    private static void CheckDuplicatesAnyOrder(List<Item> level)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (Item item in level)
+        {
+            if (!seen.Add(item.Name.ToUpperInvariant()))
+                throw new ArgumentException($"Duplicate stream name '{item.Name}'.");
+        }
+    }
+
+    /// <summary>
+    /// Links the entries of one storage as a red-black tree, inserting them in the order given, as Windows Installer does.
+    /// Returns the directory index of the tree's root, or -1 when the list is empty.
+    /// </summary>
+    private static int LinkRedBlack(List<Item> level)
+    {
+        Item? root = null;
+        foreach (Item z in level)
+        {
+            Item? y = null;
+            Item? x = root;
+            while (x != null)
+            {
+                y = x;
+                x = CompareNames(z.Name, x.Name) < 0 ? x.RbLeft : x.RbRight;
+            }
+            z.RbParent = y;
+            if (y == null) root = z;
+            else if (CompareNames(z.Name, y.Name) < 0) y.RbLeft = z;
+            else y.RbRight = z;
+            z.Red = true;
+
+            Item n = z;
+            while (n.RbParent != null && n.RbParent.Red)
+            {
+                Item parent = n.RbParent;
+                Item grand = parent.RbParent!; // a red parent is never the root
+                if (parent == grand.RbLeft)
+                {
+                    Item? uncle = grand.RbRight;
+                    if (uncle != null && uncle.Red)
+                    {
+                        parent.Red = false;
+                        uncle.Red = false;
+                        grand.Red = true;
+                        n = grand;
+                    }
+                    else
+                    {
+                        if (n == parent.RbRight)
+                        {
+                            n = parent;
+                            RotateLeft(n, ref root);
+                            parent = n.RbParent!;
+                        }
+                        parent.Red = false;
+                        grand.Red = true;
+                        RotateRight(grand, ref root);
+                    }
+                }
+                else
+                {
+                    Item? uncle = grand.RbLeft;
+                    if (uncle != null && uncle.Red)
+                    {
+                        parent.Red = false;
+                        uncle.Red = false;
+                        grand.Red = true;
+                        n = grand;
+                    }
+                    else
+                    {
+                        if (n == parent.RbLeft)
+                        {
+                            n = parent;
+                            RotateRight(n, ref root);
+                            parent = n.RbParent!;
+                        }
+                        parent.Red = false;
+                        grand.Red = true;
+                        RotateLeft(grand, ref root);
+                    }
+                }
+            }
+            root!.Red = false;
+        }
+        if (root == null) return -1;
+        foreach (Item item in level)
+        {
+            item.LeftIndex = item.RbLeft?.DirectoryIndex ?? -1;
+            item.RightIndex = item.RbRight?.DirectoryIndex ?? -1;
+        }
+        return root.DirectoryIndex;
+    }
+
+    private static void RotateLeft(Item x, ref Item? root)
+    {
+        Item y = x.RbRight!;
+        x.RbRight = y.RbLeft;
+        if (y.RbLeft != null) y.RbLeft.RbParent = x;
+        y.RbParent = x.RbParent;
+        if (x.RbParent == null) root = y;
+        else if (x == x.RbParent.RbLeft) x.RbParent.RbLeft = y;
+        else x.RbParent.RbRight = y;
+        y.RbLeft = x;
+        x.RbParent = y;
+    }
+
+    private static void RotateRight(Item x, ref Item? root)
+    {
+        Item y = x.RbLeft!;
+        x.RbLeft = y.RbRight;
+        if (y.RbRight != null) y.RbRight.RbParent = x;
+        y.RbParent = x.RbParent;
+        if (x.RbParent == null) root = y;
+        else if (x == x.RbParent.RbRight) x.RbParent.RbRight = y;
+        else x.RbParent.RbLeft = y;
+        y.RbRight = x;
+        x.RbParent = y;
+    }
+
     private static void CheckDuplicates(List<Item> sorted)
     {
         for (int i = 1; i < sorted.Count; i++)
@@ -256,10 +569,11 @@ internal static class CompoundFileWriter
         return node.DirectoryIndex;
     }
 
-    private static void WriteDirectory(byte[] body, List<Item> items, int rootChild, int miniSectorTotal, int containerStart, byte[]? rootClsid)
+    private static void WriteDirectory(byte[] body, List<Item> items, int rootChild, int miniSectorTotal, int containerStart, byte[]? rootClsid, bool windows)
     {
         int entries = items.Count + 1;
-        var dir = new byte[((entries + 3) / 4) * 4 * 128];
+        int perSector = windows ? WindowsSectorSize / 128 : SectorSize / 128;
+        var dir = new byte[((entries + perSector - 1) / perSector) * perSector * 128];
         for (int e = 0; e < dir.Length / 128; e++)
         {
             int at = e * 128;
@@ -269,7 +583,7 @@ internal static class CompoundFileWriter
         }
 
         // Root storage.
-        WriteEntry(dir, 0, "Root Entry", 5, 1, NoStream, NoStream, rootChild < 0 ? NoStream : (uint) rootChild,
+        WriteEntry(dir, 0, "Root Entry", 5, windows ? 0 : 1, NoStream, NoStream, rootChild < 0 ? NoStream : (uint) rootChild,
             miniSectorTotal > 0 ? (uint) containerStart : EndOfChain, (ulong) miniSectorTotal * MiniSectorSize);
         // Windows Installer identifies a database by this class id on the root storage.
         byte[] installerClsid = rootClsid ?? new byte[] { 0x84, 0x10, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0, 0, 0, 0, 0, 0, 0x46 };
@@ -278,7 +592,7 @@ internal static class CompoundFileWriter
         foreach (var item in items)
         {
             // Red nodes are the deepest level; this keeps every path to a leaf at the same black height.
-            int color = item.TreeMaxDepth > 0 && item.Depth == item.TreeMaxDepth ? 0 : 1;
+            int color = windows ? (item.Red ? 0 : 1) : (item.TreeMaxDepth > 0 && item.Depth == item.TreeMaxDepth ? 0 : 1);
             uint left = item.LeftIndex < 0 ? NoStream : (uint) item.LeftIndex;
             uint right = item.RightIndex < 0 ? NoStream : (uint) item.RightIndex;
             if (item.IsStorage)

@@ -14,6 +14,9 @@ internal sealed class MsiWriteTable
     }
 
     public string Name { get; }
+
+    /// <summary>Row values get their string ids from the last column to the first (rows added through records or SQL).</summary>
+    public bool InternReversed { get; set; }
     public IReadOnlyList<MsiWriteColumn> Columns { get; }
 
     /// <summary>

@@ -98,6 +98,7 @@ namespace IsWiX.WindowsInstaller
                     {
                         row[this.insertColumns[k]] = Evaluate(insert.Values[k], parameters);
                     }
+                    this.table.InternReversed = true;
                     this.table.Insert(row, this.database.EnforceStringWidth);
                     break;
                 }

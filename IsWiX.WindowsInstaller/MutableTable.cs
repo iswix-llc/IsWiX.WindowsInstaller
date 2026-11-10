@@ -26,6 +26,12 @@ namespace IsWiX.WindowsInstaller
 
         public List<object?[]> Rows { get; }
 
+        /// <summary>
+        /// True when rows were added through records or SQL. Windows Installer then hands out string ids from the last column
+        /// to the first, where an IDT import goes first to last.
+        /// </summary>
+        public bool InternReversed { get; set; }
+
         /// <summary>The table as queries see it. It shares the live row list, so later changes are visible to it.</summary>
         public SqlTable Snapshot { get; }
 

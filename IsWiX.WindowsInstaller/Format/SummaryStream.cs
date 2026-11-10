@@ -145,7 +145,7 @@ namespace IsWiX.WindowsInstaller.Format
             var output = new MemoryStream();
             var header = new byte[HeaderSize];
             BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(0), 0xFFFE);
-            BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(4), 0x00020005);
+            BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(4), 0x0002000A);
             BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(24), 1);
             Array.Copy(Fmtid, 0, header, 28, Fmtid.Length);
             BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(44), HeaderSize);

@@ -51,6 +51,10 @@ namespace IsWiX.WindowsInstaller
             bool useSource = source != null && source.Length == table.Columns.Count
                 && (mode == (int) ViewModifyMode.Update || mode == (int) ViewModifyMode.Delete);
             int existing = table.FindByKey(table.KeyOf(useSource ? source! : supplied));
+            if (mode == (int) ViewModifyMode.Insert || mode == (int) ViewModifyMode.Assign || mode == (int) ViewModifyMode.Replace || mode == (int) ViewModifyMode.Merge)
+            {
+                table.InternReversed = true;
+            }
             switch (mode)
             {
                 case (int) ViewModifyMode.Insert:

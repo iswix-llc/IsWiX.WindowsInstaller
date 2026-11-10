@@ -31,7 +31,7 @@ internal static class MsiWriter
     /// Writes an MSI like <see cref="Write"/>, but each plain stream is given by its length and a reader, so a large
     /// stream is read only while it is being written.
     /// </summary>
-    public static void WriteSources(Stream output, int codePage, IReadOnlyList<MsiWriteTable> tables, IReadOnlyDictionary<string, StreamSource>? streams = null, IReadOnlyList<string?>? stringPoolSeed = null, IReadOnlyList<CompoundFileWriter.Storage>? storages = null, byte[]? rootClsid = null)
+    public static void WriteSources(Stream output, int codePage, IReadOnlyList<MsiWriteTable> tables, IReadOnlyDictionary<string, StreamSource>? streams = null, IReadOnlyList<string?>? stringPoolSeed = null, IReadOnlyList<CompoundFileWriter.Storage>? storages = null, byte[]? rootClsid = null, bool windowsLayout = true, IReadOnlyList<PoolEvent>? poolEvents = null, StringPoolCarrier? carrier = null)
     {
         if (output is null) throw new ArgumentNullException(nameof(output));
         if (tables is null) throw new ArgumentNullException(nameof(tables));
@@ -48,28 +48,70 @@ internal static class MsiWriter
                 throw new ArgumentException($"Table '{table.Name}' has no primary key column.");
         }
 
-        var pool = new StringPoolBuilder(stringPoolSeed);
+        // A database that is written after every change (Direct) hands the same pool from one write to the next, so ids,
+        // free ids and the summary step survive; a pool that does not match the file's is started again from the file.
+        StringPoolBuilder pool;
+        bool freshPool;
+        int eventsDone;
+        if (carrier?.Builder is StringPoolBuilder carried && stringPoolSeed != null && carried.IdCount + 1 == stringPoolSeed.Count)
+        {
+            pool = carried;
+            pool.ResetReferences();
+            freshPool = carrier.Fresh;
+            eventsDone = carrier.EventsDone;
+        }
+        else
+        {
+            pool = new StringPoolBuilder(stringPoolSeed);
+            freshPool = stringPoolSeed == null || StringPoolBuilder.IsEmptyPool(stringPoolSeed);
+            eventsDone = 0;
+        }
 
         // Cells first: string cells get pool ids, so the pool's reference width is known before serializing.
-        var prepared = tables.Select(t => PrepareTable(t, pool)).ToList();
+        // Importing _SummaryInformation interns its values and releases them again; the ids they free are reused by the
+        // strings added next, newest first. Only a new database starts from an empty pool, so only then is this modelled.
+        // Windows Installer also takes strings for a stream put through _Streams and gives them back. The events are
+        // applied in the order they happened, each after the table that was imported last when it happened.
+        int eventCount = freshPool && poolEvents != null ? poolEvents.Count : 0;
+        var prepared = new List<PreparedTable>();
+        while (eventsDone < eventCount && (poolEvents![eventsDone].AfterTable == null || !tables.Any(t => t.Name == poolEvents[eventsDone].AfterTable)))
+        {
+            poolEvents[eventsDone++].Apply(pool);
+        }
+        foreach (MsiWriteTable table in tables)
+        {
+            prepared.Add(PrepareTable(table, pool));
+            while (eventsDone < eventCount && poolEvents![eventsDone].AfterTable == table.Name)
+            {
+                poolEvents[eventsDone++].Apply(pool);
+            }
+        }
         var systemTables = PrepareSystemTables(tables, pool);
 
         var pooled = pool.Build(codePage);
+        if (carrier != null)
+        {
+            carrier.Builder = pool;
+            carrier.Fresh = freshPool;
+            carrier.EventsDone = eventsDone;
+        }
         int width = pooled.BytesPerRef;
 
-        var streamList = new List<(string Name, long Length, Func<byte[]> Read)>
-        {
-            Bytes(StreamNameCodec.TablePrefix + StreamNameCodec.Encode("_StringPool"), pooled.Pool),
-            Bytes(StreamNameCodec.TablePrefix + StreamNameCodec.Encode("_StringData"), pooled.Data),
-            Bytes(StreamNameCodec.TablePrefix + StreamNameCodec.Encode("_Tables"), SerializeColumns(systemTables.TablesCells, width)),
-            Bytes(StreamNameCodec.TablePrefix + StreamNameCodec.Encode("_Columns"), SerializeColumns(systemTables.ColumnsCells, width)),
-        };
+        // Windows Installer creates the streams in this order, and the compound file lists them in the order they were created:
+        // the table streams in table order with the summary information after the first one, then other streams such as
+        // cabinets, then _Validation, then the system tables.
+        var tableStreams = new List<(string Name, long Length, Func<byte[]> Read)>();
+        (string Name, long Length, Func<byte[]> Read)? validation = null;
         foreach (var table in prepared)
         {
             // Windows Installer leaves out the stream of a table with no rows.
             if (table.Cells.RowCount == 0) continue;
-            streamList.Add(Bytes(StreamNameCodec.TablePrefix + StreamNameCodec.Encode(table.Name), SerializeColumns(table.Cells, width)));
+            var entry = Bytes(StreamNameCodec.TablePrefix + StreamNameCodec.Encode(table.Name), SerializeColumns(table.Cells, width));
+            if (table.Name == "_Validation") validation = entry;
+            else tableStreams.Add(entry);
         }
+        (string Name, long Length, Func<byte[]> Read)? summary = null;
+        var otherStreams = new List<(string Name, long Length, Func<byte[]> Read)>();
         if (streams != null)
         {
             foreach (var (name, source) in streams)
@@ -77,11 +119,27 @@ internal static class MsiWriter
                 if (name.Length > 0 && name[0] == StreamNameCodec.TablePrefix)
                     throw new ArgumentException($"Stream '{name}' uses the reserved table prefix.");
                 // Names starting with U+0005 are OLE property sets, such as the summary information, and are stored as written.
-                streamList.Add((name[0] == '\u0005' ? name : StreamNameCodec.Encode(name), source.Length, source.Read));
+                var entry = (name[0] == '\u0005' ? name : StreamNameCodec.Encode(name), source.Length, source.Read);
+                if (name == SummaryStream.Name) summary = entry;
+                else otherStreams.Add(entry);
             }
         }
 
-        CompoundFileWriter.Write(output, streamList, rootClsid, storages);
+        var streamList = new List<(string Name, long Length, Func<byte[]> Read)>();
+        for (int i = 0; i < tableStreams.Count; i++)
+        {
+            streamList.Add(tableStreams[i]);
+            if (i == 0 && summary != null) streamList.Add(summary.Value);
+        }
+        if (tableStreams.Count == 0 && summary != null) streamList.Add(summary.Value);
+        streamList.AddRange(otherStreams);
+        if (validation != null) streamList.Add(validation.Value);
+        streamList.Add(Bytes(StreamNameCodec.TablePrefix + StreamNameCodec.Encode("_Tables"), SerializeColumns(systemTables.TablesCells, width)));
+        streamList.Add(Bytes(StreamNameCodec.TablePrefix + StreamNameCodec.Encode("_Columns"), SerializeColumns(systemTables.ColumnsCells, width)));
+        streamList.Add(Bytes(StreamNameCodec.TablePrefix + StreamNameCodec.Encode("_StringPool"), pooled.Pool));
+        streamList.Add(Bytes(StreamNameCodec.TablePrefix + StreamNameCodec.Encode("_StringData"), pooled.Data));
+
+        CompoundFileWriter.Write(output, streamList, rootClsid, storages, windowsLayout);
     }
 
     private static (string Name, long Length, Func<byte[]> Read) Bytes(string name, byte[] data) => (name, data.Length, () => data);
@@ -153,24 +211,29 @@ internal static class MsiWriter
 
     private static PreparedTable PrepareTable(MsiWriteTable table, StringPoolBuilder pool)
     {
-        Cells cells = Prepare(table.Columns, table.Rows, table.Name, pool);
+        // The table name and then the column names get their ids first, as when Windows Installer creates the table.
+        pool.Reserve(table.Name);
+        foreach (MsiWriteColumn column in table.Columns)
+            pool.Reserve(column.Name);
+        Cells cells = Prepare(table.Columns, table.Rows, table.Name, pool, table.InternReversed);
         return new PreparedTable(table.Name, SortByPrimaryKey(cells, table.Columns));
     }
 
-    private static Cells Prepare(IReadOnlyList<MsiWriteColumn> columns, IReadOnlyList<object?[]> rows, string table, StringPoolBuilder pool)
+    private static Cells Prepare(IReadOnlyList<MsiWriteColumn> columns, IReadOnlyList<object?[]> rows, string table, StringPoolBuilder pool, bool reversed = false)
     {
+        // Strings get their ids row by row, left to right, which is the order Windows Installer reads an IDT file in.
         var values = new List<uint[]>(columns.Count);
         for (int j = 0; j < columns.Count; j++)
+            values.Add(new uint[rows.Count]);
+        for (int i = 0; i < rows.Count; i++)
         {
-            var column = columns[j];
-            var cells = new uint[rows.Count];
-            for (int i = 0; i < rows.Count; i++)
+            if (rows[i].Length != columns.Count)
+                throw new ArgumentException($"Row {i} of '{table}' has {rows[i].Length} values for {columns.Count} columns.");
+            for (int n = 0; n < columns.Count; n++)
             {
-                if (rows[i].Length != columns.Count)
-                    throw new ArgumentException($"Row {i} of '{table}' has {rows[i].Length} values for {columns.Count} columns.");
-                cells[i] = CellValue(column, rows[i][j], table, i, pool);
+                int j = reversed ? columns.Count - 1 - n : n;
+                values[j][i] = CellValue(columns[j], rows[i][j], table, i, pool);
             }
-            values.Add(cells);
         }
         return new Cells(columns.Select(c => c.Type).ToList(), columns.Select(c => c.Size).ToList(), values, rows.Count);
     }
@@ -290,10 +353,10 @@ internal static class MsiWriter
         return data;
     }
 
-    private sealed record PooledStrings(byte[] Pool, byte[] Data, int BytesPerRef);
+    internal sealed record PooledStrings(byte[] Pool, byte[] Data, int BytesPerRef);
 
     /// <summary>Builds the _StringPool and _StringData streams from the strings added during preparation.</summary>
-    private sealed class StringPoolBuilder
+    internal sealed class StringPoolBuilder
     {
         private readonly Dictionary<string, uint> _ids = new(StringComparer.Ordinal);
         private readonly List<string> _strings = new();
@@ -307,8 +370,10 @@ internal static class MsiWriter
         /// </summary>
         public StringPoolBuilder(IReadOnlyList<string?>? seed)
         {
-            if (seed == null || seed.Count <= 1)
+            if (seed == null || IsEmptyPool(seed))
             {
+                // A database with no tables yet has only the four standard entries (and the writer blanks them in the
+                // empty file it starts with), so a new pool begins with the four entries every Windows-made database has.
                 seed = new string?[] { null, "Name", "Table", null, "Type" };
             }
             for (int id = 1; id < seed.Count; id++)
@@ -323,6 +388,71 @@ internal static class MsiWriter
             }
         }
 
+        /// <summary>
+        /// Gives a string its id without counting a reference to it. Windows Installer interns a table's name and its column
+        /// names when the table is created, before any row is added; the references to them come later from _Tables and _Columns.
+        /// </summary>
+        /// <summary>True for the pool of a database with no tables: nothing in it has text (the writer blanks unused entries).</summary>
+        public int IdCount => _strings.Count;
+
+        private int _temporaries;
+
+        private void Free(uint id)
+        {
+            _ids.Remove(_strings[(int) id - 1]);
+            _strings[(int) id - 1] = "";
+            _refs[(int) id - 1] = 0;
+            _free.Push(id);
+        }
+
+        /// <summary>
+        /// Models a stream put through a view on _Streams. The first one takes four strings (the view's query parts and the
+        /// stream name) and gives them back, the third, the second, the fourth and then the first; a later one only the
+        /// stream name. The ids freed are reused by the strings added next. Seen with one cabinet stream.
+        /// </summary>
+        public void StreamPut(bool firstView)
+        {
+            int count = firstView ? 4 : 1;
+            var taken = new uint[count];
+            for (int i = 0; i < count; i++)
+                taken[i] = Allocate("\u0001temporary" + _temporaries++, 0);
+            if (firstView)
+            {
+                Free(taken[2]);
+                Free(taken[1]);
+                Free(taken[3]);
+                Free(taken[0]);
+            }
+            else
+            {
+                Free(taken[0]);
+            }
+        }
+
+        /// <summary>Forgets the references counted so far, keeping ids, text and free ids; the tables are counted again.</summary>
+        public void ResetReferences()
+        {
+            for (int i = 0; i < _refs.Count; i++)
+                _refs[i] = 0;
+        }
+
+        public static bool IsEmptyPool(IReadOnlyList<string?> seed)
+        {
+            for (int i = 0; i < seed.Count; i++)
+            {
+                if (!string.IsNullOrEmpty(seed[i]))
+                    return false;
+            }
+            return true;
+        }
+
+        public void Reserve(string text)
+        {
+            if (text.Length == 0 || _ids.ContainsKey(text))
+                return;
+            Allocate(text, 0);
+        }
+
         public uint Add(string text)
         {
             if (text.Length == 0)
@@ -332,11 +462,68 @@ internal static class MsiWriter
                 _refs[(int) id - 1]++;
                 return id;
             }
-            _strings.Add(text);
-            _refs.Add(1);
-            id = (uint) _strings.Count;
+            return Allocate(text, 1);
+        }
+
+        // Ids released earlier are handed out again, the most recently released first; a pool with none appends.
+        private readonly Stack<uint> _free = new();
+
+        private uint Allocate(string text, int refs)
+        {
+            uint id;
+            if (_free.Count > 0)
+            {
+                id = _free.Pop();
+                _strings[(int) id - 1] = text;
+                _refs[(int) id - 1] = refs;
+            }
+            else
+            {
+                _strings.Add(text);
+                _refs.Add(refs);
+                id = (uint) _strings.Count;
+            }
             _ids[text] = id;
             return id;
+        }
+
+        /// <summary>
+        /// Models importing a _SummaryInformation IDT into Windows Installer: the column names and then the values, in file
+        /// order, get ids; then the values are released in property id order (a string goes once its last user is released),
+        /// then the column names. Strings that were already in the pool stay. The ids left free are reused newest first.
+        /// </summary>
+        public void ImportTemporary(IReadOnlyList<(int Id, string Value)> rows)
+        {
+            var created = new HashSet<uint>();
+            var uses = new Dictionary<uint, int>();
+            uint Take(string text)
+            {
+                if (text.Length == 0)
+                    return 0;
+                if (!_ids.TryGetValue(text, out uint id))
+                {
+                    id = Allocate(text, 0);
+                    created.Add(id);
+                }
+                uses[id] = (uses.TryGetValue(id, out int n) ? n : 0) + 1;
+                return id;
+            }
+            void Release(uint id)
+            {
+                if (id == 0 || --uses[id] > 0 || !created.Contains(id))
+                    return;
+                Free(id);
+            }
+
+            uint propertyId = Take("PropertyId");
+            uint value = Take("Value");
+            var taken = new List<(int Id, uint Text)>(rows.Count);
+            foreach (var row in rows)
+                taken.Add((row.Id, Take(row.Value)));
+            foreach (var row in taken.OrderBy(t => t.Id))
+                Release(row.Text);
+            Release(propertyId);
+            Release(value);
         }
 
         public PooledStrings Build(int codePage)
@@ -352,7 +539,8 @@ internal static class MsiWriter
             WriteWord(pool, ((codePage >> 16) & 0x7FFF) | (longRefs ? 0x8000 : 0));
             for (int i = 0; i < _strings.Count; i++)
             {
-                byte[] bytes = encoding.GetBytes(_strings[i]);
+                // msi.dll blanks the text of an entry nothing references any more but keeps its slot, so ids stay stable.
+                byte[] bytes = _refs[i] == 0 ? Array.Empty<byte>() : encoding.GetBytes(_strings[i]);
                 if (bytes.Length > MaxStringLength)
                     throw new ArgumentException("A string is too long for the string pool.");
                 WriteWord(pool, bytes.Length);
@@ -389,4 +577,46 @@ internal static class MsiWriter
 
         public static Encoding Get(int codePage) => Encoding.GetEncoding(codePage);
     }
+}
+
+/// <summary>
+/// Something that took strings from Windows Installer's pool and gave them back while a database was built: the import
+/// of a _SummaryInformation IDT, or a stream put through _Streams. AfterTable is the table imported last when it happened
+/// (null for before any), so the pool can be allocated the way Windows Installer does.
+/// </summary>
+internal sealed class PoolEvent
+{
+    private readonly IReadOnlyList<(int Id, string Value)>? _summaryRows;
+    private readonly bool _firstStreamView;
+
+    private PoolEvent(string? afterTable, IReadOnlyList<(int Id, string Value)>? summaryRows, bool firstStreamView)
+    {
+        AfterTable = afterTable;
+        _summaryRows = summaryRows;
+        _firstStreamView = firstStreamView;
+    }
+
+    public string? AfterTable { get; }
+
+    public bool IsStream => _summaryRows == null;
+
+    public static PoolEvent ForSummary(string? afterTable, IReadOnlyList<(int Id, string Value)> rows) => new PoolEvent(afterTable, rows, false);
+
+    public static PoolEvent ForStream(string? afterTable, bool firstView) => new PoolEvent(afterTable, null, firstView);
+
+    internal void Apply(MsiWriter.StringPoolBuilder pool)
+    {
+        if (_summaryRows != null)
+            pool.ImportTemporary(_summaryRows);
+        else
+            pool.StreamPut(_firstStreamView);
+    }
+}
+
+/// <summary>The string pool a Direct database keeps between its writes (see <see cref="MsiWriter.WriteSources"/>).</summary>
+internal sealed class StringPoolCarrier
+{
+    internal object? Builder;
+    internal bool Fresh;
+    internal int EventsDone;
 }
